@@ -24,9 +24,15 @@ fn build_value<'a>(
     expr: Expression<'a>,
     rt: &mut RuntimeEnv,
 ) -> Index {
+    use Operation::*;
+    // use compute::VarType;
+
     match expr {
-        Expression::ConstInteger(i) => rt.node_from_operation(Element::Const(Rc::new(i))),
-        Expression::ConstString(s) => rt.node_from_operation(Element::Const(Rc::new(s))),
+        Expression::ConstInteger(i) => rt.node_from_operation(Const(Rc::new(VarType::Int(i)))),
+        Expression::ConstString(s) => {
+            let charvec = s.chars().map(|c| rt.node_from_operation(Const(Rc::new(VarType::Char(c))))).collect();
+            rt.node_from_operation(Vector(charvec))
+        },
         Expression::ValueRef(Name(n)) => rt.by_name[n],
         Expression::FunctionApplication { function, arguments } => {
             panic!("Not yet implemented!")
@@ -40,7 +46,7 @@ fn build_value<'a>(
             let body_idx = build_value(*body, rt);
             let else_idx = build_value(*else_body, rt);
 
-            rt.node_from_operation(Element::IfElse(guard_idx, body_idx, else_idx))
+            rt.node_from_operation(IfElse(guard_idx, body_idx, else_idx))
         }
 
         Expression::Range { from:_, to: _ } => panic!("Not yet implemented!"),

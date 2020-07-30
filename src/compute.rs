@@ -3,24 +3,80 @@ use std::any::Any;
 use std::rc::Rc;
 use std::collections::HashMap;
 
+#[derive(PartialEq, Eq, Debug)]
+pub enum VarType {
+    Int(i64),
+    Bool(bool),
+    Char(char),
+    Vector(Vec<Rc<VarType>>)
+}
+
+impl VarType {
+    
+    pub fn unpack_int(&self) -> Option<i64> {
+        if let VarType::Int(i) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub fn unpack_bool(&self) -> Option<bool> {
+        if let VarType::Bool(i) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub fn unpack_char(&self) -> Option<char> {
+        if let VarType::Char(i) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub fn unpack_vector(&self) -> Option<&Vec<Rc<VarType>>> {
+        if let VarType::Vector(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn stringify(&self) -> Option<String> {
+        self.unpack_vector().and_then(|v| {
+            let mut result = "".to_string();
+            for c in v.iter() {
+                match c.unpack_char() {
+                    Some(cc) => result.push(cc),
+                    None => return None
+                }
+            }
+            Some(result)
+        })
+    }
+}
+
 pub struct Node {
-    value_cache: Option<Rc<dyn Any>>,
-    operation: Element,
+    value_cache: Option<Rc<VarType>>,
+    operation: Operation,
     dependents: Vec<Index>,
-    being_computed: bool,
+    being_computed: bool
 }
 
 #[derive(Clone)]
-pub enum Element {
-    Const(Rc<dyn Any>),
+pub enum Operation {
+    Const(Rc<VarType>),
     Vector(Vec<Index>),
     Sum(Index, Index),
     IfElse(Index, Index, Index),
 }
 
-impl Element {
+impl Operation {
     fn dependencies(&self) -> Vec<Index> {
-        use Element::*;
+        use Operation::*;
         match self {
             Const(_) => Vec::new(),
             Vector(v) => v.clone(),
@@ -36,7 +92,7 @@ pub struct RuntimeEnv {
 }
 
 impl RuntimeEnv {
-    pub fn node_from_operation(&mut self, operation: Element) -> Index {
+    pub fn node_from_operation(&mut self, operation: Operation) -> Index {
         let dependencies = operation.dependencies();
 
         let node = self.nodes.insert(Node {
@@ -53,8 +109,8 @@ impl RuntimeEnv {
         node
     }
 
-    fn compute_value(&mut self, idx: Index) -> Rc<dyn Any> {
-        use Element::*;
+    fn compute_value(&mut self, idx: Index) -> Rc<VarType> {
+        use Operation::*;
 
         let mut node = &mut self.nodes[idx];
 
@@ -67,16 +123,15 @@ impl RuntimeEnv {
         let new_val = match node.operation.clone() {
             Const(v) => v,
             Vector(v) => Rc::new(
-                v.iter()
+                VarType::Vector(v.iter()
                     .map(|idx_1| self.pull(*idx_1))
-                    .collect::<Vec<Rc<dyn Any>>>(),
+                    .collect()),
             ),
-            Sum(a, b) => Rc::new(
-                self.pull(a).downcast_ref::<i64>().unwrap()
-                    + self.pull(b).downcast_ref::<i64>().unwrap(),
-            ),
+            Sum(a, b) => Rc::new(VarType::Int(
+                self.pull(a).unpack_int().unwrap() + self.pull(b).unpack_int().unwrap(),
+            )),
             IfElse(g, b, eb) => {
-                if *self.pull(g).downcast_ref::<bool>().unwrap() {
+                if self.pull(g).unpack_bool().unwrap() {
                     self.pull(b)
                 } else {
                     self.pull(eb)
@@ -88,7 +143,7 @@ impl RuntimeEnv {
         new_val
     }
 
-    pub fn pull(&mut self, idx: Index) -> Rc<dyn Any> {
+    pub fn pull(&mut self, idx: Index) -> Rc<VarType> {
         let node = &mut self.nodes[idx];
 
         match &node.value_cache {

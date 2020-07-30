@@ -13,6 +13,7 @@ extern crate term_size;
 
 use std::{env, fs};
 use std::process::exit;
+use std::rc::Rc;
 
 // enum RuntimeRef {
 //     StringRef(Index),
@@ -273,8 +274,7 @@ fn main() {
         "{:?}",
         runtime
             .pull(runtime.by_name["stdout"])
-            .downcast_ref::<String>()
-            .unwrap()
+            .stringify()
     );
 
     // run(runtime);
