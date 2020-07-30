@@ -261,9 +261,6 @@ fn main() {
         }
     };
 
-
-
-    
     println!("Building...");
 
     let mut runtime = build::build(result).expect("Build failed.");
@@ -275,8 +272,9 @@ fn main() {
     println!(
         "{:?}",
         runtime
-            .pull(runtime.stdout.unwrap())
+            .pull(runtime.by_name["stdout"])
             .downcast_ref::<String>()
+            .unwrap()
     );
 
     // run(runtime);

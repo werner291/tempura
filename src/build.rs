@@ -22,13 +22,12 @@ fn index_assignments<'a>(ast: TempuraAST<'a>) -> Result<HashMap<&'a str, Assignm
 
 fn build_value<'a>(
     expr: Expression<'a>,
-    name_to_node: &mut HashMap<&str, Index>,
     rt: &mut RuntimeEnv,
 ) -> Index {
     match expr {
         Expression::ConstInteger(i) => rt.node_from_operation(Element::Const(Rc::new(i))),
         Expression::ConstString(s) => rt.node_from_operation(Element::Const(Rc::new(s))),
-        Expression::ValueRef(Name(n)) => name_to_node[n],
+        Expression::ValueRef(Name(n)) => rt.by_name[n],
         Expression::FunctionApplication { function, arguments } => {
             panic!("Not yet implemented!")
         }
@@ -37,9 +36,9 @@ fn build_value<'a>(
             body,
             else_body,
         } => {
-            let guard_idx = build_value(*guard, name_to_node, rt);
-            let body_idx = build_value(*body, name_to_node, rt);
-            let else_idx = build_value(*else_body, name_to_node, rt);
+            let guard_idx = build_value(*guard, rt);
+            let body_idx = build_value(*body, rt);
+            let else_idx = build_value(*else_body, rt);
 
             rt.node_from_operation(Element::IfElse(guard_idx, body_idx, else_idx))
         }
@@ -66,18 +65,20 @@ pub fn build<'a>(ast: TempuraAST<'a>) -> Result<RuntimeEnv, &str> {
 
     let mut re = RuntimeEnv {
         nodes: Arena::new(),
-        stdout: None,
+        by_name: HashMap::new()
     };
 
-    let mut name_to_node = HashMap::new();
+    println!("AST: {:?}", ast_index);
 
     while let Some(name) = ts.pop() {
-        let val = build_value(
-            ast_index.remove(name).unwrap().expr,
-            &mut name_to_node,
-            &mut re,
-        );
-        name_to_node.insert(name, val);
+        if !re.by_name.contains_key(name) {
+            println!("{}", name);
+            let val = build_value(
+                ast_index.remove(name).unwrap().expr,
+                &mut re,
+            );
+            re.by_name.insert(name.to_string(), val);
+        }
     }
 
     if !ts.is_empty() {

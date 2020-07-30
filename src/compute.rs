@@ -1,6 +1,7 @@
 use generational_arena::{Arena, Index};
 use std::any::Any;
 use std::rc::Rc;
+use std::collections::HashMap;
 
 pub struct Node {
     value_cache: Option<Rc<dyn Any>>,
@@ -31,7 +32,7 @@ impl Element {
 
 pub struct RuntimeEnv {
     pub nodes: Arena<Node>,
-    pub stdout: Option<Index>,
+    pub by_name: HashMap<String, Index>,
 }
 
 impl RuntimeEnv {

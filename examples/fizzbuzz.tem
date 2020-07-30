@@ -1,6 +1,6 @@
 
 :: int -> str
-fb i = "hello"
+fb i = "Hello world! $i"
 
 :: str
-stdout = lines (map fb (99..0))
+stdout = fb 500
