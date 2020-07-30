@@ -1,0 +1,42 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+
+program = { SOI ~ "\n"* ~ (valuedec ~ "\n"+) * ~ valuedec? ~ EOI }
+
+ttype = {
+    fntype | simpletype
+}
+
+fntype = { simpletype ~ ("," ~ simpletype )* ~ "->" ~ simpletype }
+
+simpletype = { "int" | "string" }
+
+untyped_valuedec = { ident ~ (ident)* ~ "=" ~ expr }
+
+valuedec = { ("::" ~ ttype)? ~ untyped_valuedec }
+
+ident = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+string = ${ "\"" ~ inner ~ "\"" }
+
+inner = @{ char* }
+
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+
+integer = @{ "-"? ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) }
+
+range = {integer ~ ".." ~ integer}
+
+ifelse = {"if" ~ expr ~ "then" ~ expr ~ "else" ~ expr}
+
+expr = {
+    ident | 
+    integer | 
+    range |
+    string | 
+    ifelse
+}

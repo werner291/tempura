@@ -4,7 +4,7 @@ let
     overlays = [ moz_overlay ];
   };
   ruststable = (nixpkgs.latest.rustChannels.stable.rust.override {
-    extensions = [ "rust-src" "rust-analysis" ];}
+    extensions = [ "rust-src" "rust-analysis" "rls-preview" ];}
   );
 in
   with nixpkgs;

@@ -1,2 +1,24 @@
 
-stdout = "Hello world!"
+# t : int@mono
+# t = clock 1000
+
+# make_line : int -> string
+# make_line ti = "This is line: $ti"
+
+# stdout : string@mono
+# stdout = lines $ map (ti => ) (0..t)
+
+:: int -> string
+fb i = 
+    if ti mod 5 == 0 and ti mod 3 == 0 then 
+        "fizzbuzz"
+    elif ti mod 5 == 0 then 
+        "fizz"
+    elif ti mod 3 == 0 then 
+        "buzz"
+    else 
+        "$ti"
+    endif
+
+:: string
+stdout = lines $ map fb (99..0)

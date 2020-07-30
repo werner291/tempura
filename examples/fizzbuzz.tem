@@ -1,0 +1,6 @@
+
+:: int -> str
+fb i = "hello"
+
+:: str
+stdout = lines (map fb (99..0))
