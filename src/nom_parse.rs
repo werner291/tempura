@@ -4,27 +4,26 @@ use nom::{
     // branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{char, digit1},
-    combinator::{cut, map, opt},
-    error::context,
-    multi::{many1, separated_list},
-    sequence::{delimited, pair, preceded, separated_pair, tuple},
+    combinator::{map, opt},
+    error::{context, convert_error, ParseError, VerboseError},
+    multi::separated_list,
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     AsChar,
     IResult,
-    sep
 };
 
 use crate::ast::*;
 
 // Whitespace
 
-fn whitespace(src: &str) -> nom::IResult<&str, &str> {
+fn whitespace<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, &'a str, E> {
     let chars = " \t\r\n";
     take_while(move |c| chars.contains(c))(src)
 }
 
 //region Name
 
-fn name(src: &str) -> nom::IResult<&str, Name> {
+fn name<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Name, E> {
     map(
         take_while1(|item: char| item.is_alphanum() || item == '_'),
         Name,
@@ -34,7 +33,7 @@ fn name(src: &str) -> nom::IResult<&str, Name> {
 
 //region Expression
 
-fn ifelse<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
+fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Expression<'a>, E> {
     context(
         "if-then-else",
         map(
@@ -61,50 +60,125 @@ fn ifelse<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
     )(src)
 }
 
-fn functiontype<'a>(src: &'a str) -> nom::IResult<&str, Type> {
-    context(
-        "Function type.",
-        map(
-            separated_pair(
-                preceded(whitespace, primtype),
-                preceded(whitespace, tag("->")),
-                preceded(whitespace, primtype),
+enum AssigmentOrSubmodule<'a> {
+    Assignment(Assignment<'a>),
+    Submodule(Module<'a>),
+}
+
+fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module<'a>, E> {
+    use AssigmentOrSubmodule::*;
+
+    let mod_input = map(
+        separated_pair(
+            preceded(whitespace, name),
+            preceded(whitespace, char(':')),
+            preceded(whitespace, ttype),
+        ),
+        |(name, input_type)| ModuleInput { name, input_type },
+    );
+
+    let parameter_list = context(
+        "Parameter list",
+        delimited(
+            char('('),
+            separated_list(char(','), mod_input),
+            preceded(whitespace, char(')')),
+        ),
+    );
+
+    let decls = context(
+        "declarations",
+        separated_list(
+            char('\n'),
+            preceded(
+                whitespace,
+                alt((map(assignment, Assignment), map(module, Submodule))),
             ),
-            |(from, to)| Type::Function {
-                arg_types: vec![from],
-                result_type: Box::new(to),
+        ),
+    );
+
+    context(
+        "module",
+        map(
+            tuple((
+                preceded(whitespace, tag("mod")),
+                preceded(whitespace, name),
+                parameter_list,
+                preceded(whitespace, char('{')),
+                opt(terminated(decls, char('\n'))),
+                context(
+                    "output expression",
+                    preceded(whitespace, expression)
+                ),
+                preceded(whitespace, char('}')),
+            )),
+            |(_mod, name, inputs, _, decls, output, _)| {
+                let mut assignments = Vec::new();
+                let mut submodules = Vec::new();
+
+                if let Some(d) = decls {
+                    for dec in d {
+                        match dec {
+                            AssigmentOrSubmodule::Assignment(ass) => assignments.push(ass),
+                            AssigmentOrSubmodule::Submodule(smod) => submodules.push(smod),
+                        }
+                    }
+                }
+
+                Module {
+                    name,
+                    inputs,
+                    assignments,
+                    submodules,
+                    output,
+                }
             },
         ),
     )(src)
 }
 
-fn ttype<'a>(src: &'a str) -> nom::IResult<&str, Type> {
-    alt((functiontype, primtype))(src)
+fn ttype<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Type, E> {
+    context(
+        "type",
+        alt((
+            map(preceded(whitespace, tag("int")), |_| Type::PrimInt),
+            map(preceded(whitespace, tag("str")), |_| Type::PrimString),
+        )),
+    )(src)
 }
 
-fn primtype<'a>(src: &'a str) -> nom::IResult<&str, Type> {
-    alt((
-        map(preceded(whitespace, tag("int")), |_| Type::PrimInt),
-        map(preceded(whitespace, tag("str")), |_| Type::PrimString),
-    ))(src)
-}
-
-fn function_application<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
+fn function_application<'a, E: ParseError<&'a str>>(
+    src: &'a str,
+) -> nom::IResult<&str, Expression<'a>, E> {
     // Adjust to make sure priority works as expected.
 
-    let arglist = delimited(char('('), separated_list(char(','), expression), preceded(whitespace, char(')')));
+    let arglist = context(
+        "arglist",
+        delimited(
+            char('('),
+            separated_list(char(','), preceded(whitespace,expression)),
+            preceded(whitespace, char(')')),
+        ),
+    );
 
-    map(pair(single_expression, arglist), 
-        |(function,arguments)| Expression::FunctionApplication {function:Box::new(function), arguments})(src)
+    context(
+        "function_application",
+        map(pair(name, arglist), |(mod_name, arguments)| {
+            Expression::ModuleApplication {
+                mod_name,
+                arguments,
+            }
+        }),
+    )(src)
 }
 
-fn expression<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
+fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression<'a>, E> {
     alt((function_application, range, ifelse, single_expression))(src)
 }
 
-
-
-fn single_expression<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
+fn single_expression<'a, E: ParseError<&'a str>>(
+    src: &'a str,
+) -> nom::IResult<&str, Expression<'a>, E> {
     alt((
         string,
         integer,
@@ -113,11 +187,11 @@ fn single_expression<'a>(src: &'a str) -> nom::IResult<&str, Expression<'a>> {
     ))(src)
 }
 
-fn valueref(src: &str) -> nom::IResult<&str, Expression> {
+fn valueref<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
     map(name, Expression::ValueRef)(src)
 }
 
-fn parse_int(src: &str) -> nom::IResult<&str, i64> {
+fn parse_int<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, i64, E> {
     map(
         pair(opt(char('-')), digit1),
         |(sgn, digits): (Option<char>, &str)| {
@@ -130,7 +204,7 @@ fn parse_int(src: &str) -> nom::IResult<&str, i64> {
     )(src)
 }
 
-fn range(src: &str) -> nom::IResult<&str, Expression> {
+fn range<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
     map(
         separated_pair(single_expression, tag(".."), single_expression),
         |(from, until)| Expression::Range {
@@ -145,52 +219,59 @@ fn range(src: &str) -> nom::IResult<&str, Expression> {
 //     escaped(alphanumeric, '\\', one_of("\"n\\"))(src)
 // }
 
-fn string(src: &str) -> IResult<&str, Expression> {
+fn string<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     map(quoted_string::parse_string, Expression::ConstString)(src)
 }
 
-fn integer(src: &str) -> IResult<&str, Expression> {
+fn integer<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     map(parse_int, Expression::ConstInteger)(src)
 }
 
 //endregion
 
-pub fn assignment_untyped<'a>(src: &'a str) -> nom::IResult<&'a str, Assignment<'a>> {
+pub fn assignment<'a, E: ParseError<&'a str>>(
+    src: &'a str,
+) -> nom::IResult<&'a str, Assignment<'a>, E> {
     context(
         "Value Assignment",
         map(
             tuple((
                 preceded(whitespace, name),
-                separated_list(whitespace, preceded(whitespace, name)),
+                opt(preceded(tuple((whitespace, char(':'))), ttype)),
                 preceded(whitespace, char('=')),
                 preceded(whitespace, expression),
             )),
-            |(name, args, _, expr)| Assignment {
+            |(name, typedecl, _, expr)| Assignment {
                 name,
-                args,
-                valtype: None,
+                valtype: typedecl,
                 expr,
             },
         ),
     )(src)
 }
 
-pub fn assignment<'a>(src: &'a str) -> nom::IResult<&'a str, Assignment<'a>> {
-    let typedecl = context(
-        "Type declaration.",
-        opt(preceded(tuple((whitespace, tag("::"))), cut(ttype))),
-    );
-    map(tuple((typedecl, assignment_untyped)), |(t, a)| Assignment {
-        valtype: t,
-        ..a
-    })(src)
-}
+// pub fn assignment<'a><'a, E: ParseError<&'a str>>(src: &'a  str) -> nom::IResult<&'a str, Assignment<'a, E>> {
 
-pub fn parse_tempura<'a>(src: &'a str) -> nom::IResult<&'a str, TempuraAST<'a>> {
-    context(
-        "Top-level",
-        map(separated_list(char('\n'), assignment), |ass| TempuraAST { assignments: ass }),
-    )(src)
+//     let typedecl = context(
+//         "Type declaration.",
+//         opt(preceded(tuple((whitespace, char(':'))), ttype)),
+//     );
+//     map(tuple((typedecl, assignment_untyped)), |(t, a)| Assignment {
+//         valtype: t,
+//         ..a
+//     })(src)
+// }
+
+pub fn parse_tempura<'a, E: ParseError<&'a str>>(
+    src: &'a str,
+) -> nom::IResult<&'a str, Module<'a>, E> {
+    module(src)
+    // context(
+    //     "Top-level",
+    //     map(separated_list(char('\n'), module), |modules| TempuraAST {
+    //         modules
+    //     }),
+    // )(src)
 }
 
 #[cfg(test)]
@@ -200,7 +281,7 @@ mod tests {
     #[test]
     fn test_ifelse() {
         assert_eq!(
-            ifelse("if foo then bar else baz"),
+            ifelse::<VerboseError<&str>>("if foo then bar else baz"),
             Ok((
                 "",
                 Expression::IfElse {
@@ -215,7 +296,7 @@ mod tests {
     #[test]
     fn test_range() {
         assert_eq!(
-            range("5..9"),
+            range::<VerboseError<&str>>("5..9"),
             Ok((
                 "",
                 Expression::Range {
@@ -228,14 +309,17 @@ mod tests {
 
     #[test]
     fn test_name() {
-        assert_eq!(name("hello"), Ok(("", Name("hello"))));
-        assert_eq!(name("hello world"), Ok((" world", Name("hello"))));
+        assert_eq!(name::<VerboseError<&str>>("hello"), Ok(("", Name("hello"))));
+        assert_eq!(
+            name::<VerboseError<&str>>("hello world"),
+            Ok((" world", Name("hello")))
+        );
     }
 
     #[test]
     fn test_whitespace() {
         assert_eq!(
-            whitespace("\t\r\n   hello\t     worldhello"),
+            whitespace::<VerboseError<&str>>("\t\r\n   hello\t     worldhello"),
             Ok(("hello\t     worldhello", "\t\r\n   "))
         );
     }
@@ -243,27 +327,56 @@ mod tests {
     #[test]
     fn test_ttype() {
         assert_eq!(
-            ttype("str \n the rest"),
+            ttype::<VerboseError<&str>>("str \n the rest"),
             Ok((" \n the rest", Type::PrimString))
         );
+    }
+
+    #[test]
+    fn text_expr1() {
         assert_eq!(
-            ttype("str -> int\n the rest"),
+            expression::<VerboseError<&str>>("map(fb,0..99) "),
             Ok((
-                "\n the rest",
-                Type::Function {
-                    arg_types: vec![Type::PrimString],
-                    result_type: Box::new(Type::PrimInt)
+                " ",
+                Expression::ModuleApplication {
+                    mod_name: Name("map"),
+                    arguments: vec![
+                        Expression::ValueRef(Name("fb")),
+                        Expression::Range {
+                            from: Box::new(Expression::ConstInteger(0)),
+                            to: Box::new(Expression::ConstInteger(99))
+                        }
+                    ]
                 }
             ))
         );
     }
 
     #[test]
-    fn test_function_application() {
+    fn text_expr2() {
+        let src2 = r#"concat("Hello world: ", to_string(i))"#;
+        let res2 = function_application::<VerboseError<&str>>(src2);
+
+        check_result(
+            src2,
+            res2,
+            Expression::ModuleApplication {
+                mod_name: Name("concat"),
+                arguments: vec![
+                    Expression::ConstString("Hello world: ".to_string()),
+                    expression::<VerboseError<&str>>("to_string(i)").unwrap().1,
+                ],
+            },
+        );
+
         assert_eq!(
-            function_application("map(fb,0..99) "),
-            Ok((" ", Expression::FunctionApplication {
-                        function: Box::new(Expression::ValueRef(Name("map"))),
+            function_application::<VerboseError<&str>>("lines(map(fb,0..99)) "),
+            Ok((
+                " ",
+                Expression::ModuleApplication {
+                    mod_name: Name("lines"),
+                    arguments: vec![Expression::ModuleApplication {
+                        mod_name: Name("map"),
                         arguments: vec![
                             Expression::ValueRef(Name("fb")),
                             Expression::Range {
@@ -271,93 +384,116 @@ mod tests {
                                 to: Box::new(Expression::ConstInteger(99))
                             }
                         ]
-                    }
-            )));
-
-            assert_eq!(
-                function_application("lines(map(fb,0..99)) "),
-                Ok((" ", Expression::FunctionApplication {
-                    function: Box::new(Expression::ValueRef(Name("lines"))),
-                    arguments: vec![
-                        Expression::FunctionApplication {
-                            function: Box::new(Expression::ValueRef(Name("map"))),
-                            arguments: vec![
-                                Expression::ValueRef(Name("fb")),
-                                Expression::Range {
-                                    from: Box::new(Expression::ConstInteger(0)),
-                                    to: Box::new(Expression::ConstInteger(99))
-                                }
-                            ]
-                        }
-                    ]
-                })));
+                    }]
+                }
+            ))
+        );
     }
 
     #[test]
     fn test_valuedec() {
         assert_eq!(
-            assignment("hello_world n = \"Hello!\""),
+            assignment::<VerboseError<&str>>("hello_world : str= \"Hello!\""),
             Ok((
                 "",
                 Assignment {
-                    args: vec![Name("n")],
                     expr: Expression::ConstString("Hello!".to_string()),
                     name: Name("hello_world"),
-                    valtype: None
+                    valtype: Some(Type::PrimString),
                 }
             ))
         );
 
         assert_eq!(
-            assignment("stdout = lines(map(fb,5..9))"),
-            Ok(("", Assignment {
-                args: vec![],
-                expr: expression("lines(map(fb,5..9))").unwrap().1,
-                name: Name("stdout"),
-                valtype: None
-            }))
+            assignment::<VerboseError<&str>>("stdout = lines(map(fb,5..9))"),
+            Ok((
+                "",
+                Assignment {
+                    expr: expression::<VerboseError<&str>>("lines(map(fb,5..9))")
+                        .unwrap()
+                        .1,
+                    name: Name("stdout"),
+                    valtype: None,
+                }
+            ))
         )
     }
 
     #[test]
     fn test_integer() {
-        assert_eq!(parse_int("1337"), Ok(("", 1337)));
-        assert_eq!(parse_int("-1337"), Ok(("", -1337)));
-        assert_eq!(parse_int("1337  "), Ok(("  ", 1337)));
-        assert!(parse_int("  -13 37").is_err());
+        assert_eq!(parse_int::<VerboseError<&str>>("1337"), Ok(("", 1337)));
+        assert_eq!(parse_int::<VerboseError<&str>>("-1337"), Ok(("", -1337)));
+        assert_eq!(parse_int::<VerboseError<&str>>("1337  "), Ok(("  ", 1337)));
+        assert!(parse_int::<VerboseError<&str>>("  -13 37").is_err());
     }
 
     #[test]
-    fn test_valuedec_typed() {
-        assert_eq!(
-            assignment(":: int -> str\nhello_world n = \"Hello!\""),
-            Ok((
-                "",
-                Assignment {
-                    args: vec![Name("n")],
-                    expr: Expression::ConstString("Hello!".to_string()),
-                    name: Name("hello_world"),
-                    valtype: Some(Type::Function {
-                        arg_types: vec![Type::PrimInt],
-                        result_type: Box::new(Type::PrimString)
-                    })
-                }
-            ))
+    fn test_module() {
+        let src = r#"mod fb(i : int) {
+            concat("Hello world: ", to_string(i))
+        }"#;
+
+        check_result(
+            src,
+            module(src),
+            Module {
+                name: Name("fb"),
+                inputs: vec![ModuleInput {
+                    name: Name("i"),
+                    input_type: Type::PrimInt,
+                }],
+                submodules: vec![],
+                assignments: vec![],
+                output: expression::<VerboseError<&str>>(
+                    r#"concat("Hello world: ", to_string(i))"#,
+                )
+                .unwrap()
+                .1,
+            },
         );
+    }
+
+    fn check_result<T: Eq + std::fmt::Debug>(
+        src: &str,
+        res: nom::IResult<&str, T, VerboseError<&str>>,
+        expected: T,
+    ) {
+        match res {
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                println!("Parse error: {}", convert_error(src, e));
+                assert!(false);
+            }
+            Ok((_, res)) => assert_eq!(res, expected),
+            _ => assert!(false),
+        }
     }
 
     #[test]
     fn test_toplevel() {
-        assert_eq!(
-            parse_tempura(r##":: int -> str
-                fb i = "hello"
-                
-                :: str
-                stdout = lines(map(fb,5..9))"##),
-            Ok(("", TempuraAST { assignments : vec![
-                assignment(":: int -> str\nfb i = \"hello\"").unwrap().1,
-                assignment(":: str\nstdout = lines(map(fb,5..9))").unwrap().1
-            ] }))
-        )
+        let src = r##"mod main(stdin : str) {
+
+            mod fb(i : int) {
+                concat("Hello world: ", to_string(i))
+            }
+        
+            fb(500)
+        }"##;
+
+        check_result(
+            src,
+            parse_tempura(src),
+            Module {
+                name: Name("main"),
+                inputs: vec![ModuleInput {
+                    name: Name("stdin"),
+                    input_type: Type::PrimString,
+                }],
+                submodules: vec![module::<VerboseError<&str>>(r#"mod fb(i : int) {
+                    concat("Hello world: ", to_string(i))
+                }"#).unwrap().1],
+                assignments: vec![],
+                output: expression::<VerboseError<&str>>("fb(500)").unwrap().1,
+            },
+        );
     }
 }

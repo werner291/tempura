@@ -1,6 +1,9 @@
 
-:: int -> str
-fb i = "Hello world! $i"
+mod main(stdin : str) {
 
-:: str
-stdout = fb 500
+    mod fb(i : int) {
+        concat("Hello world: ", to_string(i))
+    }
+
+    fb(500)
+}
