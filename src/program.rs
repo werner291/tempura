@@ -1,6 +1,15 @@
-
-use std::rc::Rc;
+use generational_arena::Index;
 use std::iter;
+use std::rc::Rc;
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+pub struct NodeIndex(pub Index);
+
+// #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+// pub struct FragNodeIndex(pub usize);
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+pub struct FragIndex(pub usize);
 
 #[derive(Debug, Clone)]
 pub enum VarType {
@@ -8,7 +17,7 @@ pub enum VarType {
     Bool(bool),
     Char(char),
     Vector(Rc<Vec<VarType>>),
-    Fragment(Rc<Fragment>)
+    Fragment(Rc<Fragment>),
 }
 
 impl VarType {
@@ -36,9 +45,9 @@ impl VarType {
         }
     }
 
-    pub fn unpack_vector(&self) -> Option<&Vec<VarType>> {
+    pub fn unpack_vector(&self) -> Option<Rc<Vec<VarType>>> {
         if let VarType::Vector(v) = self {
-            Some(v)
+            Some(v.clone())
         } else {
             None
         }
@@ -57,6 +66,9 @@ impl VarType {
         })
     }
 
+    pub fn from_string(string: &str) -> VarType {
+        VarType::Vector(Rc::new(string.chars().map(VarType::Char).collect()))
+    }
 
     pub fn unpack_fragment(&self) -> Option<&Rc<Fragment>> {
         if let VarType::Fragment(f) = self {
@@ -65,63 +77,54 @@ impl VarType {
             None
         }
     }
-
-    
 }
 
-use std::hash::Hash;
 use std::fmt::Debug;
+use std::hash::Hash;
 
 // #[derive(PartialEq, Eq, Debug)]
 #[derive(Clone, Debug)]
-pub enum Operation<I : Clone + Copy + Debug> {
+pub enum Operation<I: Clone + Copy + Debug> {
     Const(VarType),
     Vector(Vec<I>),
     Sum(I, I),
+    Concat(I, I),
+    ToString(I),
     IfElse(I, I, I),
-    ApplyFragment(I, Vec<I>)
+    ApplyFragment(I, Vec<I>),
 }
 
-impl<I : Copy + Debug> Operation<I> {
+impl<I: Copy + Debug> Operation<I> {
     pub fn dependencies(&self) -> Vec<I> {
         use Operation::*;
         match self {
             Const(_) => Vec::new(),
             Vector(v) => v.clone(),
             Sum(a, b) => vec![*a, *b],
+            Concat(a, b) => vec![*a, *b],
+            ToString(a) => vec![*a],
             IfElse(a, b, c) => vec![*a, *b, *c],
-            ApplyFragment(f, args) => iter::once(*f).chain(args.iter().cloned()).collect()
-        }
-    }
-
-    pub fn map_ref<O : Copy + Debug, Ft: Fn(&I) -> O>(&self, mfn : Ft) -> Operation<O> {
-        use Operation::*;
-        match self {
-            Const(c) => Const(c.clone()),
-            Vector(v) => Vector(v.iter().map(mfn).collect()),
-            Sum(a, b) => Sum(mfn(a),mfn(b)),
-            IfElse(a, b, c) => IfElse(mfn(a), mfn(b), mfn(c)),
-            ApplyFragment(f,args) => ApplyFragment(mfn(f), args.iter().map(mfn).collect()),
-            // ApplyModule(_m,args) => args.clone(),
+            ApplyFragment(f, args) => iter::once(*f).chain(args.iter().cloned()).collect(),
         }
     }
 }
 
 // pub struct RuntimeModule(pub Box<dyn Fn(Vec<NodeIndex>, &mut RuntimeEnv) -> NodeIndex>);
 
-
-
 #[derive(Eq, PartialEq, Hash, Copy, Clone, Debug)]
 pub enum ValueRef {
-    InputRef { depth: usize, index: usize },
-    ContextRef { depth: usize, index: usize }
+    InputRef { up: usize, index: usize },
+    ContextRef { up: usize, index: usize },
+    InstanciatedRef(NodeIndex),
 }
 
 impl ValueRef {
-    pub fn depth(&self) -> usize {
+    pub fn up(&self) -> usize {
+        use ValueRef::*;
         match self {
-            ValueRef::InputRef {depth,index:_} => *depth,
-            ValueRef::ContextRef {depth,index:_} => *depth
+            InputRef { up, index: _ } => *up,
+            ContextRef { up, index: _ } => *up,
+            InstanciatedRef(I) => 0,
         }
     }
 }
@@ -129,13 +132,27 @@ impl ValueRef {
 #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub struct FragmentRef {
     pub depth: usize,
-    pub index: usize
+    pub index: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct Fragment {
     pub nodes: Vec<Operation<ValueRef>>,
     // pub fragments: Vec<Fragment>,
-    pub output: ValueRef
+    pub output: ValueRef,
 }
 
+// trait NetworkEnv<I:Copy+Debug> {
+    
+//     /// Allocate a node in the envionment and return a reference to it.
+//     fn node_from_operation(op: Operation<I>) -> I;
+
+// }
+
+// impl NetworkEnv<ValueRef> for Fragment {
+
+//     fn node_from_operation(op: Operation<ValueRef>) -> ValueRef {
+
+//     }
+
+// }

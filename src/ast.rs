@@ -34,6 +34,7 @@ impl<'a> Module<'a> {
                     .iter()
                     .flat_map(|a| a.expr.collect_dependencies()),
             )
+            .chain(self.output.collect_dependencies())
             .filter(|dep| !bound_in_context.contains(&dep.get_name()))
             .collect()
     }

@@ -3,7 +3,6 @@ use crate::program::*;
 use std::collections::HashMap;
 use std::rc::Rc;
 use topological_sort::TopologicalSort;
-use generational_arena::Arena;
 
 trait Named<'a> {
     fn name(&self) -> Name<'a>;
@@ -36,22 +35,16 @@ fn index_named<'a, T: Named<'a>>(assignments: Vec<T>) -> Result<HashMap<&'a str,
     Ok(assignments_astnodes)
 }
 
-fn build_value<'a>(expr: Expression<'a>, 
-                   env: &mut FragmentBuilder<'a>) -> ValueRef {
-
+fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> ValueRef {
     use Operation::*;
     // use compute::VarType;
 
     match expr {
-        Expression::ConstInteger(i) => {
-            env.alloc_value(Operation::Const(VarType::Int(i)))
-        },
+        Expression::ConstInteger(i) => env.alloc_value(Operation::Const(VarType::Int(i))),
         Expression::ConstString(s) => {
             let charvec = s
                 .chars()
-                .map(|c| {
-                    env.alloc_value(Const(VarType::Char(c)))
-                })
+                .map(|c| env.alloc_value(Const(VarType::Char(c))))
                 .collect();
             env.alloc_value(Vector(charvec))
         }
@@ -60,17 +53,18 @@ fn build_value<'a>(expr: Expression<'a>,
             mod_name,
             arguments,
         } => {
-            
-            let argrefs : Vec<ValueRef> = arguments
+            let argrefs: Vec<ValueRef> = arguments
                 .into_iter()
                 .map(|arg| build_value(arg, env))
                 .collect();
 
             // TODO Avoid redundancy here.
-
+            println!("{:?}", mod_name);
             let fragref = env.resolve_fragment_name(mod_name.0).unwrap();
 
-            let frag = env.alloc_value(Operation::Const(VarType::Fragment(env.get_fragment(&fragref).unwrap().clone())));
+            let frag = env.alloc_value(Operation::Const(VarType::Fragment(
+                env.get_fragment(&fragref).unwrap().clone(),
+            )));
 
             env.alloc_value(Operation::ApplyFragment(frag, argrefs))
         }
@@ -96,15 +90,14 @@ fn build_value<'a>(expr: Expression<'a>,
 
 pub struct FragmentBuilder<'a> {
     pub values_by_name: HashMap<String, ValueRef>,
-    pub values : Vec<Operation<ValueRef>>,
+    pub values: Vec<Operation<ValueRef>>,
     pub fragments_by_name: HashMap<String, FragmentRef>,
-    pub fragments : Vec<Rc<Fragment>>,
+    pub fragments: Vec<Rc<Fragment>>,
     parent: Option<&'a FragmentBuilder<'a>>,
-    depth: usize
+    depth: usize,
 }
 
 impl<'a> FragmentBuilder<'a> {
-
     pub fn new() -> FragmentBuilder<'static> {
         FragmentBuilder {
             values_by_name: HashMap::new(),
@@ -112,7 +105,7 @@ impl<'a> FragmentBuilder<'a> {
             values: Vec::new(),
             fragments: Vec::new(),
             parent: None,
-            depth: 0
+            depth: 0,
         }
     }
 
@@ -120,9 +113,7 @@ impl<'a> FragmentBuilder<'a> {
         match self.values_by_name.get(name) {
             Some(idx) => Some(*idx),
             None => match self.parent {
-                Some(par) => {
-                    par.lookup_value(name)
-                }
+                Some(par) => par.lookup_value(name),
                 None => None,
             },
         }
@@ -132,9 +123,7 @@ impl<'a> FragmentBuilder<'a> {
         match self.fragments_by_name.get(name) {
             Some(idx) => Some(*idx),
             None => match self.parent {
-                Some(par) => {
-                    par.resolve_fragment_name(name)
-                }
+                Some(par) => par.resolve_fragment_name(name),
                 None => None,
             },
         }
@@ -151,8 +140,8 @@ impl<'a> FragmentBuilder<'a> {
     pub fn alloc_value(&mut self, value: Operation<ValueRef>) -> ValueRef {
         self.values.push(value);
         ValueRef::ContextRef {
-            depth: self.depth,
-            index: self.values.len() - 1
+            up: 0,
+            index: self.values.len() - 1,
         }
     }
 
@@ -160,7 +149,7 @@ impl<'a> FragmentBuilder<'a> {
         self.fragments.push(Rc::new(frag));
         FragmentRef {
             depth: self.depth,
-            index: self.fragments.len() - 1
+            index: self.fragments.len() - 1,
         }
     }
 
@@ -171,39 +160,24 @@ impl<'a> FragmentBuilder<'a> {
             fragments_by_name: HashMap::new(),
             fragments: Vec::new(),
             parent: Some(self),
-            depth: self.depth+1
+            depth: self.depth + 1,
         }
     }
-
-    // pub fn pull_fragment_into_environment(&self, fragref: &FragmentRef) -> Fragment {
-    //     match fragref {
-    //         FragmentRef::SiblingRef(direct) => self.fragments[*direct].clone(),
-    //         FragmentRef::InParentRef(ref_in_parent) => {
-    //             let frag = self.parent.unwrap().pull_fragment_into_environment(&*ref_in_parent);
-    //             Fragment {
-    //                 nodes: frag.nodes.into_iter().map(|op| op.ref_map(|val_ref| {
-    //                     match val_ref {
-    //                         ValueRef::InputRef(i) => ValueRef::InputRef(i),
-    //                         x => ValueRef::InParentRef(Box::new(x))
-    //                     }
-    //                 })).collect(),
-    //                 fragments: frag.
-    //                 output: ValueRef::InParentRef(Box::new(frag.output))
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 pub fn build_module<'a>(
     modu: Module<'a>,
     parent_env: &FragmentBuilder,
 ) -> Result<Fragment, &'static str> {
-
     let mut ast_index: HashMap<&str, Assignment> = index_named(modu.assignments)?;
     let mut mod_index: HashMap<&str, Module> = index_named(modu.submodules)?;
 
     let mut fb = parent_env.derive_child();
+
+    for (index, mi) in modu.inputs.iter().enumerate() {
+        fb.values_by_name
+            .insert(mi.name.0.to_string(), ValueRef::InputRef { up: 0, index });
+    }
 
     let mut ts = TopologicalSort::<Dependency>::new();
 
@@ -215,11 +189,12 @@ pub fn build_module<'a>(
 
     for (name, modl) in mod_index.iter() {
         for ref_to in modl.collect_dependencies() {
-            ts.add_dependency( Dependency::Module(name.to_string()), ref_to);
+            ts.add_dependency(Dependency::Module(name.to_string()), ref_to);
         }
     }
 
     while let Some(dep) = ts.pop() {
+        println!("Dep: {:?}", dep);
         match dep {
             Dependency::Module(modname) => {
                 if fb.resolve_fragment_name(&modname).is_none() {
@@ -243,18 +218,40 @@ pub fn build_module<'a>(
 
     Ok(Fragment {
         nodes: fb.values,
-        output
+        output,
     })
-
 
     // }));
 }
 
-pub fn build_toplevel_module<'a>(
-    modu: Module<'a>
-) -> Result<Fragment, &'static str> {
+pub fn build_toplevel_module<'a>(modu: Module<'a>) -> Result<Fragment, &'static str> {
+    let mut fb = FragmentBuilder::new();
 
-    build_module(modu, &FragmentBuilder::new())
+    let to_string = fb.alloc_fragment(Fragment {
+        nodes: vec![Operation::ToString(ValueRef::InputRef { up: 0, index: 0 })],
+        output: ValueRef::ContextRef { up: 0, index: 0 },
+    });
+    fb.fragments_by_name
+        .insert("to_string".to_string(), to_string);
+
+    let concat = fb.alloc_fragment(Fragment {
+        nodes: vec![Operation::Concat(
+            ValueRef::InputRef { up: 0, index: 0 },
+            ValueRef::InputRef { up: 0, index: 1 },
+        )],
+        output: ValueRef::ContextRef { up: 0, index: 0 },
+    });
+    fb.fragments_by_name.insert("concat".to_string(), concat);
+
+    // fb.build_module(Module {
+    //     name: Name("to_string"),
+    //     inputs: vec![ ModuleInput { name: Name("x"), input_type: Type::PrimString } ],
+    //     assignments: vec![],
+    //     submodules: vec![],
+    //     output: Expression::ToString()
+    // })
+
+    build_module(modu, &fb)
 }
 
 // pub fn build(ast: Module) -> Result<(RuntimeEnv, EnvStack), &str> {

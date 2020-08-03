@@ -106,10 +106,7 @@ fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Mod
                 parameter_list,
                 preceded(whitespace, char('{')),
                 opt(terminated(decls, char('\n'))),
-                context(
-                    "output expression",
-                    preceded(whitespace, expression)
-                ),
+                context("output expression", preceded(whitespace, expression)),
                 preceded(whitespace, char('}')),
             )),
             |(_mod, name, inputs, _, decls, output, _)| {
@@ -156,7 +153,7 @@ fn function_application<'a, E: ParseError<&'a str>>(
         "arglist",
         delimited(
             char('('),
-            separated_list(char(','), preceded(whitespace,expression)),
+            separated_list(char(','), preceded(whitespace, expression)),
             preceded(whitespace, char(')')),
         ),
     );
@@ -461,10 +458,10 @@ mod tests {
         match res {
             Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
                 println!("Parse error: {}", convert_error(src, e));
-                assert!(false);
+                panic!("Failure.")
             }
             Ok((_, res)) => assert_eq!(res, expected),
-            _ => assert!(false),
+            _ => panic!("Failure."),
         }
     }
 
@@ -488,9 +485,15 @@ mod tests {
                     name: Name("stdin"),
                     input_type: Type::PrimString,
                 }],
-                submodules: vec![module::<VerboseError<&str>>(r#"mod fb(i : int) {
+                submodules: vec![
+                    module::<VerboseError<&str>>(
+                        r#"mod fb(i : int) {
                     concat("Hello world: ", to_string(i))
-                }"#).unwrap().1],
+                }"#,
+                    )
+                    .unwrap()
+                    .1,
+                ],
                 assignments: vec![],
                 output: expression::<VerboseError<&str>>("fb(500)").unwrap().1,
             },

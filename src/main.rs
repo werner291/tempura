@@ -2,8 +2,8 @@ extern crate nom;
 
 mod ast;
 mod build;
-mod program;
 mod nom_parse;
+mod program;
 mod quoted_string;
 mod run;
 
@@ -13,9 +13,9 @@ extern crate term_size;
 // extern crate pest_derive;
 
 use nom::error::VerboseError;
+use run::*;
 use std::process::exit;
 use std::{env, fs};
-use run::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,15 +37,14 @@ fn main() {
 
     println!("Building...");
 
-
     let mut rte = RuntimeEnv::new();
-    
-    let main_module = build::build_toplevel_module(result).expect("Build failed.");    
+
+    let main_module = build::build_toplevel_module(result).expect("Build failed.");
 
     let charvec = "This is some input"
-                .chars()
-                .map(|c| rte.node_from_operation(program::Operation::Const(program::VarType::Char(c))))
-                .collect();
+        .chars()
+        .map(|c| rte.node_from_operation(program::Operation::Const(program::VarType::Char(c))))
+        .collect();
 
     let stdin = rte.node_from_operation(program::Operation::Vector(charvec));
 
@@ -55,11 +54,5 @@ fn main() {
 
     println!("\u{001B}[32mBuild successful...");
 
-    println!(
-        "{}",
-        rte
-            .pull(stdout)
-            .stringify()
-            .unwrap()
-    );
+    println!("{}", rte.pull(stdout).stringify().unwrap());
 }
