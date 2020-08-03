@@ -16,145 +16,136 @@ pub struct RuntimeEnv {
     // pub modules: Arena<RuntimeModule>
 }
 
-pub fn lift_reference_into_context(
-    v: &ValueRef,
-    indices: &[Index],
-    inputs: &[NodeIndex],
-) -> ValueRef {
-    if v.up() == 1 {
-        ValueRef::InstanciatedRef(match v {
-            ValueRef::ContextRef { up, index } => NodeIndex(indices[*index]),
-            ValueRef::InputRef { up, index } => inputs[*index],
-            ValueRef::InstanciatedRef(ni) => *ni,
-        })
-    } else {
-        match v {
-            ValueRef::ContextRef { up, index } => ValueRef::ContextRef {
-                up: up - 1,
-                index: *index,
-            },
-            ValueRef::InputRef { up, index } => ValueRef::ContextRef {
-                up: up - 1,
-                index: *index,
-            },
-            ValueRef::InstanciatedRef(ni) => ValueRef::InstanciatedRef(*ni),
-        }
-    }
-}
+// pub fn lift_reference_into_context(
+//     v: &ValueRef,
+//     indices: &[Index],
+//     inputs: &[NodeIndex],
+//     depth: usize
+// ) -> ValueRef {
+//     if v.up() == Some(depth) {
+//         ValueRef::InstanciatedRef(match v {
+//             ValueRef::ContextRef { up:_, index } => NodeIndex(indices[*index]),
+//             ValueRef::InputRef { up:_, index } => inputs[*index],
+//             ValueRef::InstanciatedRef(ni) => *ni,
+//         })
+//     } else {
+//         v
+//     }
+// }
 
-pub fn lift_reference_into_runtime(
-    v: &ValueRef,
-    indices: &[Index],
-    inputs: &[NodeIndex],
-) -> NodeIndex {
-    if v.up() != 1 {
-        panic!("Cannot lift non-top reference.");
-    }
+// pub fn lift_reference_into_runtime(
+//     v: &ValueRef,
+//     indices: &[Index],
+//     inputs: &[NodeIndex],
+// ) -> NodeIndex {
+//     if v.up() != 1 {
+//         panic!("Cannot lift non-top reference.");
+//     }
 
-    match v {
-        ValueRef::ContextRef { up, index } => NodeIndex(indices[*index]),
-        ValueRef::InputRef { up, index } => inputs[*index],
-        ValueRef::InstanciatedRef(ni) => *ni,
-    }
-}
+//     match v {
+//         ValueRef::ContextRef { up, index } => NodeIndex(indices[*index]),
+//         ValueRef::InputRef { up, index } => inputs[*index],
+//         ValueRef::InstanciatedRef(ni) => *ni,
+//     }
+// }
 
-pub fn lift_variable_into_context(f: &VarType, indices: &[Index], inputs: &[NodeIndex]) -> VarType {
-    match f {
-        VarType::Fragment(f) => {
-            let ff = Fragment {
-                nodes: f
-                    .nodes
-                    .iter()
-                    .map(|n| lift_operation_into_context(n, indices, inputs))
-                    .collect(),
-                output: lift_reference_into_context(&f.output, indices, inputs),
-            };
-            VarType::Fragment(Rc::new(ff))
-        }
-        VarType::Bool(b) => VarType::Bool(*b),
-        VarType::Int(i) => VarType::Int(*i),
-        VarType::Char(c) => VarType::Char(*c),
-        VarType::Vector(v) => VarType::Vector(Rc::new(
-            v.iter()
-                .map(|n| lift_variable_into_context(n, indices, inputs))
-                .collect(),
-        )),
-    }
-}
+// pub fn lift_variable_into_context(f: &VarType, indices: &[Index], inputs: &[NodeIndex]) -> VarType {
+//     match f {
+//         VarType::Fragment(f) => {
+//             let ff = Fragment {
+//                 nodes: f
+//                     .nodes
+//                     .iter()
+//                     .map(|n| lift_operation_into_context(n, indices, inputs))
+//                     .collect(),
+//                 output: lift_reference_into_context(&f.output, indices, inputs),
+//             };
+//             VarType::Fragment(Rc::new(ff))
+//         }
+//         VarType::Bool(b) => VarType::Bool(*b),
+//         VarType::Int(i) => VarType::Int(*i),
+//         VarType::Char(c) => VarType::Char(*c),
+//         VarType::Vector(v) => VarType::Vector(Rc::new(
+//             v.iter()
+//                 .map(|n| lift_variable_into_context(n, indices, inputs))
+//                 .collect(),
+//         )),
+//     }
+// }
 
-pub fn lift_operation_into_context(
-    op: &Operation<ValueRef>,
-    indices: &[Index],
-    inputs: &[NodeIndex],
-) -> Operation<ValueRef> {
-    use Operation::*;
-    match op {
-        Const(c) => Const(lift_variable_into_context(c, indices, inputs)),
-        Vector(v) => Vector(
-            v.iter()
-                .map(|n| lift_reference_into_context(n, indices, inputs))
-                .collect(),
-        ),
-        Sum(a, b) => Sum(
-            lift_reference_into_context(a, indices, inputs),
-            lift_reference_into_context(b, indices, inputs),
-        ),
-        Concat(a, b) => Concat(
-            lift_reference_into_context(a, indices, inputs),
-            lift_reference_into_context(b, indices, inputs),
-        ),
-        ToString(a) => ToString(lift_reference_into_context(a, indices, inputs)),
-        IfElse(a, b, c) => IfElse(
-            lift_reference_into_context(a, indices, inputs),
-            lift_reference_into_context(b, indices, inputs),
-            lift_reference_into_context(c, indices, inputs),
-        ),
-        ApplyFragment(f, args) => ApplyFragment(
-            lift_reference_into_context(f, indices, inputs),
-            args.iter()
-                .map(|n| lift_reference_into_context(n, indices, inputs))
-                .collect(),
-        ),
-        // ApplyModule(_m,args) => args.clone(),
-    }
-}
+// pub fn lift_operation_into_context(
+//     op: &Operation<ValueRef>,
+//     indices: &[Index],
+//     inputs: &[NodeIndex],
+// ) -> Operation<ValueRef> {
+//     use Operation::*;
+//     match op {
+//         Const(c) => Const(lift_variable_into_context(c, indices, inputs)),
+//         Vector(v) => Vector(
+//             v.iter()
+//                 .map(|n| lift_reference_into_context(n, indices, inputs))
+//                 .collect(),
+//         ),
+//         Sum(a, b) => Sum(
+//             lift_reference_into_context(a, indices, inputs),
+//             lift_reference_into_context(b, indices, inputs),
+//         ),
+//         Concat(a, b) => Concat(
+//             lift_reference_into_context(a, indices, inputs),
+//             lift_reference_into_context(b, indices, inputs),
+//         ),
+//         ToString(a) => ToString(lift_reference_into_context(a, indices, inputs)),
+//         IfElse(a, b, c) => IfElse(
+//             lift_reference_into_context(a, indices, inputs),
+//             lift_reference_into_context(b, indices, inputs),
+//             lift_reference_into_context(c, indices, inputs),
+//         ),
+//         ApplyFragment(f, args) => ApplyFragment(
+//             lift_reference_into_context(f, indices, inputs),
+//             args.iter()
+//                 .map(|n| lift_reference_into_context(n, indices, inputs))
+//                 .collect(),
+//         ),
+//         // ApplyModule(_m,args) => args.clone(),
+//     }
+// }
 
-pub fn lift_operation_into_runtime(
-    op: &Operation<ValueRef>,
-    indices: &[Index],
-    inputs: &[NodeIndex],
-) -> Operation<NodeIndex> {
-    use Operation::*;
-    match op {
-        Const(c) => Const(lift_variable_into_context(c, indices, inputs)),
-        Vector(v) => Vector(
-            v.iter()
-                .map(|n| lift_reference_into_runtime(n, indices, inputs))
-                .collect(),
-        ),
-        Sum(a, b) => Sum(
-            lift_reference_into_runtime(a, indices, inputs),
-            lift_reference_into_runtime(b, indices, inputs),
-        ),
-        Concat(a, b) => Concat(
-            lift_reference_into_runtime(a, indices, inputs),
-            lift_reference_into_runtime(b, indices, inputs),
-        ),
-        ToString(a) => ToString(lift_reference_into_runtime(a, indices, inputs)),
-        IfElse(a, b, c) => IfElse(
-            lift_reference_into_runtime(a, indices, inputs),
-            lift_reference_into_runtime(b, indices, inputs),
-            lift_reference_into_runtime(c, indices, inputs),
-        ),
-        ApplyFragment(f, args) => ApplyFragment(
-            lift_reference_into_runtime(f, indices, inputs),
-            args.iter()
-                .map(|n| lift_reference_into_runtime(n, indices, inputs))
-                .collect(),
-        ),
-        // ApplyModule(_m,args) => args.clone(),
-    }
-}
+// pub fn lift_operation_into_runtime(
+//     op: &Operation<ValueRef>,
+//     indices: &[Index],
+//     inputs: &[NodeIndex],
+// ) -> Operation<NodeIndex> {
+//     use Operation::*;
+//     match op {
+//         Const(c) => Const(lift_variable_into_context(c, indices, inputs)),
+//         Vector(v) => Vector(
+//             v.iter()
+//                 .map(|n| lift_reference_into_runtime(n, indices, inputs))
+//                 .collect(),
+//         ),
+//         Sum(a, b) => Sum(
+//             lift_reference_into_runtime(a, indices, inputs),
+//             lift_reference_into_runtime(b, indices, inputs),
+//         ),
+//         Concat(a, b) => Concat(
+//             lift_reference_into_runtime(a, indices, inputs),
+//             lift_reference_into_runtime(b, indices, inputs),
+//         ),
+//         ToString(a) => ToString(lift_reference_into_runtime(a, indices, inputs)),
+//         IfElse(a, b, c) => IfElse(
+//             lift_reference_into_runtime(a, indices, inputs),
+//             lift_reference_into_runtime(b, indices, inputs),
+//             lift_reference_into_runtime(c, indices, inputs),
+//         ),
+//         ApplyFragment(f, args) => ApplyFragment(
+//             lift_reference_into_runtime(f, indices, inputs),
+//             args.iter()
+//                 .map(|n| lift_reference_into_runtime(n, indices, inputs))
+//                 .collect(),
+//         ),
+//         // ApplyModule(_m,args) => args.clone(),
+//     }
+// }
 
 impl RuntimeEnv {
     pub fn new() -> RuntimeEnv {
@@ -255,22 +246,18 @@ impl RuntimeEnv {
 
     pub fn instantiate_fragment(
         &mut self,
-        frag: &Fragment,
+        frag: &Fragment<ValueRef>,
         arguments: Vec<NodeIndex>,
     ) -> NodeIndex {
-        println!("Hello!");
 
         let indices = self.nodes.insert_many_with(frag.nodes.len(), |indices| {
-            frag.nodes
-                .iter()
-                .enumerate()
-                .map(|(idx, sub_val)| {
-                    let op = lift_operation_into_runtime(
-                        sub_val,
-                        indices.as_slice(),
-                        arguments.as_slice(),
-                    );
 
+            let noderefs : Vec<NodeIndex> = indices.iter().cloned().map(NodeIndex).collect();
+
+            frag.fill_in(noderefs.as_slice(), arguments.as_slice(), 0)
+                .finalize()
+                .nodes.into_iter()
+                .map(|op| {
                     Node {
                         value_cache: None,
                         being_computed: false,
@@ -281,11 +268,6 @@ impl RuntimeEnv {
                 .collect()
         });
 
-        match frag.output {
-            // Kinda pointless, but covering all cases anyway for consistency.
-            ValueRef::ContextRef { up, index } => NodeIndex(indices[index]),
-            ValueRef::InputRef { up, index } => arguments[index],
-            ValueRef::InstanciatedRef(inst) => inst,
-        }
+        NodeIndex(indices[frag.output])
     }
 }
