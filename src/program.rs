@@ -1,6 +1,7 @@
 use generational_arena::Index;
 use std::iter;
 use std::rc::Rc;
+use itertools::join;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub struct NodeIndex(pub Index);
@@ -77,6 +78,16 @@ impl VarType {
             None
         }
     }
+
+    pub fn render_as_string(&self) -> String {
+        match self {
+            VarType::Int(i) => i.to_string(),
+            VarType::Bool(b) => b.to_string(),
+            VarType::Char(c) =>  c.to_string(),
+            VarType::Fragment(f) => format!("{:?}", f),
+            VarType::Vector(v) => format!("[{}]", join(v.iter().map(VarType::render_as_string), ","))
+        }
+    }
 }
 
 use std::fmt::Debug;
@@ -126,52 +137,64 @@ impl ValueRef {
         match self {
             InputRef { up, index: _ } => Some(*up),
             ContextRef { up, index: _ } => Some(*up),
-            InstanciatedRef(I) => None,
+            InstanciatedRef(_) => None,
         }
     }
 }
 
 pub trait Lacunary<F> {
-
     fn fill_in(&self, nodes: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> Self;
 
     fn finalize(self) -> F;
-
 }
 
 #[derive(Clone, Debug)]
-pub struct Fragment<I:Copy+Debug> {
+pub struct Fragment<I: Copy + Debug> {
     // TODO maybe add an index of stuff to be filled in?
     // Current algorithm is kinda expensive.
+    pub name: String,
     pub nodes: Vec<Operation<I>>,
     pub output: usize,
 }
 
 impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
-
-    fn fill_in(&self, nodes: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> Fragment<ValueRef> {
+    fn fill_in(
+        &self,
+        nodes: &[NodeIndex],
+        inputs: &[NodeIndex],
+        depth: usize,
+    ) -> Fragment<ValueRef> {
         Fragment {
-            nodes: self.nodes.iter().map(|n| n.fill_in(nodes, inputs, depth)).collect(),
-            output: self.output
+            name: self.name.clone(),
+            nodes: self
+                .nodes
+                .iter()
+                .map(|n| n.fill_in(nodes, inputs, depth))
+                .collect(),
+            output: self.output,
         }
     }
 
     fn finalize(self) -> Fragment<NodeIndex> {
         Fragment {
+            name: self.name,
             nodes: self.nodes.into_iter().map(|n| n.finalize()).collect(),
             // nodes: self.nodes.iter().map(|n| match n {
             //     ValueRef::InstanciatedRef(n) => n,
             //     _ => panic!("cannot finalize with remaining hole")
             // }).collect(),
-            output: self.output
+            output: self.output,
         }
     }
-
 }
 
 impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
-
-    fn fill_in(&self, indices: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> Operation<ValueRef> {
+    fn fill_in(
+        &self,
+        indices: &[NodeIndex],
+        inputs: &[NodeIndex],
+        depth: usize,
+    ) -> Operation<ValueRef> {
         use Operation::*;
 
         match self {
@@ -200,7 +223,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
                 args.iter()
                     .map(|n| n.fill_in(indices, inputs, depth))
                     .collect(),
-            )
+            ),
         }
     }
 
@@ -209,57 +232,29 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
 
         match self {
             Const(c) => Const(c.finalize()),
-            Vector(v) => Vector(
-                v.iter()
-                    .map(|n| n.finalize())
-                    .collect(),
-            ),
-            Sum(a, b) => Sum(
-                a.finalize(),
-                b.finalize(),
-            ),
-            Concat(a, b) => Concat(
-                a.finalize(),
-                b.finalize(),
-            ),
+            Vector(v) => Vector(v.iter().map(|n| n.finalize()).collect()),
+            Sum(a, b) => Sum(a.finalize(), b.finalize()),
+            Concat(a, b) => Concat(a.finalize(), b.finalize()),
             ToString(a) => ToString(a.finalize()),
-            IfElse(a, b, c) => IfElse(
-                a.finalize(),
-                b.finalize(),
-                c.finalize(),
-            ),
-            ApplyFragment(f, args) => ApplyFragment(
-                f.finalize(),
-                args.iter()
-                    .map(|n| n.finalize())
-                    .collect(),
-            )
+            IfElse(a, b, c) => IfElse(a.finalize(), b.finalize(), c.finalize()),
+            ApplyFragment(f, args) => {
+                ApplyFragment(f.finalize(), args.iter().map(|n| n.finalize()).collect())
+            }
         }
     }
 }
 
 impl Lacunary<VarType> for VarType {
-
     fn fill_in(&self, indices: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> VarType {
         match self {
             VarType::Fragment(f) => {
-                let ff = Fragment {
-                    nodes: f
-                        .nodes
-                        .iter()
-                        .map(|n| n.fill_in(indices, inputs, depth))
-                        .collect(),
-                    output: f.output,
-                };
-                VarType::Fragment(Rc::new(ff.fill_in(indices, inputs, depth+1)))
+                VarType::Fragment(Rc::new(f.fill_in(indices, inputs, depth + 1)))
             }
             VarType::Bool(b) => VarType::Bool(*b),
             VarType::Int(i) => VarType::Int(*i),
             VarType::Char(c) => VarType::Char(*c),
             VarType::Vector(v) => VarType::Vector(Rc::new(
-                v.iter()
-                    .map(|n| n.fill_in(indices, inputs, depth))
-                    .collect(),
+                v.iter().map(|n| n.fill_in(indices, inputs, depth)).collect(),
             )),
         }
     }
@@ -270,22 +265,19 @@ impl Lacunary<VarType> for VarType {
             VarType::Bool(b) => VarType::Bool(b),
             VarType::Int(i) => VarType::Int(i),
             VarType::Char(c) => VarType::Char(c),
-            VarType::Vector(v) => VarType::Vector(Rc::new(
-                v.iter().cloned()
-                    .map(|n| n.finalize())
-                    .collect(),
-            )),
+            VarType::Vector(v) => {
+                VarType::Vector(Rc::new(v.iter().cloned().map(|n| n.finalize()).collect()))
+            }
         }
     }
 }
 
 impl Lacunary<NodeIndex> for ValueRef {
-
     fn fill_in(&self, nodes: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> ValueRef {
         if self.up() == Some(depth) {
             ValueRef::InstanciatedRef(match self {
-                ValueRef::ContextRef { up:_, index } => nodes[*index],
-                ValueRef::InputRef { up:_, index } => inputs[*index],
+                ValueRef::ContextRef { up: _, index } => nodes[*index],
+                ValueRef::InputRef { up: _, index } => inputs[*index],
                 ValueRef::InstanciatedRef(ni) => *ni,
             })
         } else {
@@ -296,8 +288,7 @@ impl Lacunary<NodeIndex> for ValueRef {
     fn finalize(self) -> NodeIndex {
         match self {
             ValueRef::InstanciatedRef(ni) => ni,
-            _ => panic!("trying to finalize an incomplete ValueRef")
+            _ => panic!("trying to finalize an incomplete ValueRef"),
         }
     }
-
 }

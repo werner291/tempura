@@ -1,35 +1,37 @@
 use crate::ast::*;
 use crate::program::*;
+use std::rc::Rc;
 use std::collections::HashMap;
 use topological_sort::TopologicalSort;
 
 mod fragment_builder;
 use fragment_builder::*;
+use crate::run::RuntimeEnv;
 
-trait Named<'a> {
-    fn name(&self) -> Name<'a>;
+trait Named {
+    fn name(&self) -> &Name;
 }
 
-impl<'a> Named<'a> for Assignment<'a> {
-    fn name(&self) -> Name<'a> {
-        self.name
+impl Named for Assignment {
+    fn name(&self) -> &Name {
+        &self.name
     }
 }
 
-impl<'a> Named<'a> for Module<'a> {
-    fn name(&self) -> Name<'a> {
-        self.name
+impl Named for Module {
+    fn name(&self) -> &Name {
+        &self.name
     }
 }
 
-fn index_named<'a, T: Named<'a>>(assignments: Vec<T>) -> Result<HashMap<&'a str, T>, &'static str> {
+fn index_named<T: Named>(assignments: Vec<T>) -> Result<HashMap<String, T>, &'static str> {
     // Map of assignments, from name to the AST entry.
     // This is basically ast.assignments but in map form without duplicates.
     let mut assignments_astnodes = HashMap::new();
 
     for assgt in assignments.into_iter() {
         // Insert assignment into map for fast lookup.
-        if let Some(_old) = assignments_astnodes.insert(assgt.name().0, assgt) {
+        if let Some(_old) = assignments_astnodes.insert(assgt.name().0.clone(), assgt) {
             return Err("Duplicate assignment.");
         }
     }
@@ -37,7 +39,7 @@ fn index_named<'a, T: Named<'a>>(assignments: Vec<T>) -> Result<HashMap<&'a str,
     Ok(assignments_astnodes)
 }
 
-fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> ValueRef {
+fn build_value(expr: Expression, env: &mut FragmentBuilder) -> ValueRef {
     use Operation::*;
     // use compute::VarType;
 
@@ -51,7 +53,7 @@ fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> Value
                 .collect();
             env.alloc_value(Vector(charvec))
         }
-        Expression::ValueRef(Name(n)) => env.lookup_value(n).unwrap(),
+        Expression::ValueRef(Name(n)) => env.lookup_value(&n).unwrap(),
         Expression::ModuleApplication {
             mod_name,
             arguments,
@@ -61,7 +63,7 @@ fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> Value
                 .map(|arg| build_value(arg, env))
                 .collect();
 
-            let fragref = env.lookup_value(mod_name.0).expect("module not found");
+            let fragref = env.lookup_value(&mod_name.0).expect("module not found");
 
             env.alloc_value(Operation::ApplyFragment(fragref, argrefs))
         }
@@ -77,18 +79,24 @@ fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> Value
             env.alloc_value(IfElse(guard_idx, body_idx, else_idx))
         }
 
+        Expression::Sum { a, b } => {
+            let a_idx = build_value(*a, env);
+            let b_idx = build_value(*b, env);
+
+            env.alloc_value(Sum(a_idx, b_idx))
+        }
         Expression::Range { from: _, to: _ } => panic!("Not yet implemented!"),
     }
 }
 
-pub fn build_module<'a>(
-    modu: Module<'a>,
+pub fn build_module(
+    modu: Module,
     parent_env: &FragmentBuilder,
 ) -> Result<Fragment<ValueRef>, &'static str> {
-    let mut ast_index: HashMap<&str, Assignment> = index_named(modu.assignments)?;
-    let mut mod_index: HashMap<&str, Module> = index_named(modu.submodules)?;
+    let mut ast_index = index_named(modu.assignments)?;
+    let mut mod_index = index_named(modu.submodules)?;
 
-    let mut fb = parent_env.derive_child();
+    let mut fb = parent_env.derive_child(modu.name.0);
 
     for (index, mi) in modu.inputs.iter().enumerate() {
         fb.values_by_name
@@ -110,7 +118,6 @@ pub fn build_module<'a>(
     }
 
     while let Some(dep) = ts.pop() {
-        println!("Dep: {:?}", dep);
         match dep {
             Dependency::Module(modname) => {
                 if fb.lookup_value(&modname).is_none() {
@@ -135,25 +142,38 @@ pub fn build_module<'a>(
     Ok(fb.build(output))
 }
 
-pub fn build_toplevel_module<'a>(modu: Module<'a>) -> Result<Fragment<ValueRef>, &'static str> {
-    let mut fb = FragmentBuilder::new();
+pub fn build_runtime(main_module: Module) -> Result<RuntimeEnv, &'static str> {
 
-    let to_string = fb.alloc_fragment(Fragment {
-        nodes: vec![Operation::ToString(ValueRef::InputRef { up: 0, index: 0 })],
-        output: 0,
-    });
+    let stdlib = vec![
+        Fragment {
+            name: "to_string".to_string(),
+            nodes: vec![Operation::ToString(ValueRef::InputRef { up: 0, index: 0 })],
+            output: 0,
+        },
+        Fragment {
+            name: "concat".to_string(),
+            nodes: vec![Operation::Concat(
+                ValueRef::InputRef { up: 0, index: 0 },
+                ValueRef::InputRef { up: 0, index: 1 },
+            )],
+            output: 0,
+        }
+    ];
 
-    fb.values_by_name.insert("to_string".to_string(), to_string);
+    let mut re = RuntimeEnv::new();
+    let mut fb = FragmentBuilder::new("".to_string());
 
-    let concat = fb.alloc_fragment(Fragment {
-        nodes: vec![Operation::Concat(
-            ValueRef::InputRef { up: 0, index: 0 },
-            ValueRef::InputRef { up: 0, index: 1 },
-        )],
-        output: 0,
-    });
+    for f in stdlib {
+        let name = f.name.clone();
+        let n = re.node_from_operation(Operation::Const(VarType::Fragment(Rc::new(f))));
+        fb.values_by_name.insert(name, ValueRef::InstanciatedRef(n));
+    }
 
-    fb.values_by_name.insert("concat".to_string(), concat);
+    let mainmod = build_module(main_module, &fb).unwrap();
 
-    build_module(modu, &fb)
+    let stdout = re.instantiate_fragment(&mainmod, vec![]);
+
+    re.stdout = Some(stdout);
+
+    Ok(re)
 }

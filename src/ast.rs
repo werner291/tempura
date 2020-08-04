@@ -1,30 +1,38 @@
+use itertools::Itertools;
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::iter;
 
-// #[derive(Debug, Eq, PartialEq)]
-// pub struct TempuraAST<'a> {
-//     modules: Vec<Module<'a>>
-// }
+pub trait TempuraAST {
+    fn gen_code(&self) -> String;
+}
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Assignment<'a> {
-    pub name: Name<'a>,
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Assignment {
+    pub name: Name,
     pub valtype: Option<Type>,
-    pub expr: Expression<'a>,
+    pub expr: Expression,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Module<'a> {
-    pub name: Name<'a>,
-    pub inputs: Vec<ModuleInput<'a>>,
-    pub assignments: Vec<Assignment<'a>>,
-    pub submodules: Vec<Module<'a>>,
-    pub output: Expression<'a>,
+impl TempuraAST for Assignment {
+    fn gen_code(&self) -> String {
+        format!("{} = {}", self.name.gen_code(), self.expr.gen_code())
+    }
 }
 
-impl<'a> Module<'a> {
-    pub fn collect_dependencies(&'a self) -> Vec<Dependency> {
-        let bound_in_context: HashSet<&str> = self.inputs.iter().map(|inp| inp.name.0).collect();
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Module {
+    pub name: Name,
+    pub inputs: Vec<ModuleInput>,
+    pub assignments: Vec<Assignment>,
+    pub submodules: Vec<Module>,
+    pub output: Expression,
+}
+
+impl Module {
+    pub fn collect_dependencies(&self) -> Vec<Dependency> {
+        let bound_in_context: HashSet<&str> =
+            self.inputs.iter().map(|inp| inp.name.0.borrow()).collect();
 
         self.submodules
             .iter()
@@ -40,30 +48,68 @@ impl<'a> Module<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ModuleInput<'a> {
-    pub name: Name<'a>,
+impl TempuraAST for Module {
+    fn gen_code(&self) -> String {
+        let args = self
+            .inputs
+            .iter()
+            .map(|mi| {
+                format!(
+                    "{} : {}",
+                    mi.name.gen_code(),
+                    match mi.input_type {
+                        Type::PrimInt => "int",
+                        Type::PrimString => "str",
+                    }
+                )
+            })
+            .join(", ");
+
+        let submodules = self.submodules.iter().map(Module::gen_code).join("\n");
+
+        let valuedecls = self.assignments.iter().map(Assignment::gen_code).join("\n");
+
+        let output = self.output.gen_code();
+
+        let declarations = format!("{}\n{}\n{}", submodules, valuedecls, output);
+
+        format!(
+            "mod {modname}({args}) {{ \n {declarations} \n }}",
+            modname = self.name.gen_code(),
+            args = args,
+            declarations = declarations
+        )
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct ModuleInput {
+    pub name: Name,
     pub input_type: Type,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Expression<'a> {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Expression {
     ConstString(String),
     ConstInteger(i64),
     ConstBoolean(bool),
     ModuleApplication {
-        mod_name: Name<'a>,
-        arguments: Vec<Expression<'a>>,
+        mod_name: Name,
+        arguments: Vec<Expression>,
+    },
+    Sum {
+        a: Box<Expression>,
+        b: Box<Expression>,
     },
     Range {
-        from: Box<Expression<'a>>,
-        to: Box<Expression<'a>>,
+        from: Box<Expression>,
+        to: Box<Expression>,
     },
-    ValueRef(Name<'a>),
+    ValueRef(Name),
     IfElse {
-        guard: Box<Expression<'a>>,
-        body: Box<Expression<'a>>,
-        else_body: Box<Expression<'a>>,
+        guard: Box<Expression>,
+        body: Box<Expression>,
+        else_body: Box<Expression>,
     },
 }
 
@@ -82,22 +128,27 @@ impl Dependency {
     }
 }
 
-impl<'a> Expression<'a> {
+impl Expression {
     pub fn collect_dependencies(&self) -> Vec<Dependency> {
         match self {
             Expression::ConstString(_) => vec![],
             Expression::ConstInteger(_) => vec![],
             Expression::ConstBoolean(_) => vec![],
-            Expression::ValueRef(n) => vec![Dependency::Value(n.0.to_string())],
+            Expression::ValueRef(n) => vec![Dependency::Value(n.0.clone())],
             Expression::Range { from, to } => from
                 .collect_dependencies()
                 .into_iter()
                 .chain(to.collect_dependencies().into_iter())
                 .collect(),
+            Expression::Sum { a, b } => a
+                .collect_dependencies()
+                .into_iter()
+                .chain(b.collect_dependencies().into_iter())
+                .collect(),
             Expression::ModuleApplication {
                 mod_name,
                 arguments,
-            } => iter::once(Dependency::Module(mod_name.0.to_string()))
+            } => iter::once(Dependency::Module(mod_name.0.clone()))
                 .chain(
                     arguments
                         .iter()
@@ -118,14 +169,51 @@ impl<'a> Expression<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct TypeDecl<'a>(pub Name<'a>, pub Type);
+impl TempuraAST for Expression {
+    fn gen_code(&self) -> String {
+        match self {
+            Expression::ConstString(s) => format!("\"{}\"", s),
+            Expression::ConstInteger(i) => i.to_string(),
+            Expression::ConstBoolean(b) => (if *b { "true" } else { "false" }).to_string(),
+            Expression::ValueRef(n) => n.gen_code(),
+            Expression::Range { from, to } => format!("{}..{}", from.gen_code(), to.gen_code()),
+            Expression::Sum { a, b } => format!("{}..{}", a.gen_code(), b.gen_code()),
+            Expression::ModuleApplication {
+                mod_name,
+                arguments,
+            } => format!(
+                "{}({})",
+                mod_name.gen_code(),
+                arguments.iter().map(TempuraAST::gen_code).join(", ")
+            ),
+            Expression::IfElse {
+                guard,
+                body,
+                else_body,
+            } => format!(
+                "if {} then {} else {}",
+                guard.gen_code(),
+                body.gen_code(),
+                else_body.gen_code()
+            ),
+        }
+    }
+}
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct TypeDecl(pub Name, pub Type);
+
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Type {
     PrimInt,
     PrimString,
 }
 
-#[derive(Hash, Debug, Eq, PartialEq, Copy, Clone)]
-pub struct Name<'a>(pub &'a str);
+#[derive(Hash, Debug, Eq, PartialEq, Clone)]
+pub struct Name(pub String);
+
+impl TempuraAST for Name {
+    fn gen_code(&self) -> String {
+        self.0.clone()
+    }
+}

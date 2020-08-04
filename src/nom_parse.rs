@@ -1,15 +1,19 @@
 use crate::quoted_string;
+
+use quickcheck::{Arbitrary, Gen};
+
+// Compiler keeps waning about `convert_error` and `VerboseError` despite them being used.
+#[allow(unused_imports)]
+use nom::error::{context, convert_error, ParseError, VerboseError};
+
 use nom::{
     branch::alt,
-    // branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{char, digit1},
     combinator::{map, opt},
-    error::{context, convert_error, ParseError, VerboseError},
     multi::separated_list,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
-    AsChar,
-    IResult,
+    AsChar, IResult,
 };
 
 use crate::ast::*;
@@ -26,14 +30,14 @@ fn whitespace<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str,
 fn name<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Name, E> {
     map(
         take_while1(|item: char| item.is_alphanum() || item == '_'),
-        Name,
+        |s: &str| Name(s.to_string()),
     )(src)
 }
 //endregion
 
 //region Expression
 
-fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Expression<'a>, E> {
+fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Expression, E> {
     context(
         "if-then-else",
         map(
@@ -60,12 +64,12 @@ fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Exp
     )(src)
 }
 
-enum AssigmentOrSubmodule<'a> {
-    Assignment(Assignment<'a>),
-    Submodule(Module<'a>),
+enum AssigmentOrSubmodule {
+    Assignment(Assignment),
+    Submodule(Module),
 }
 
-fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module<'a>, E> {
+pub fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module, E> {
     use AssigmentOrSubmodule::*;
 
     let mod_input = map(
@@ -146,7 +150,7 @@ fn ttype<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Type
 
 fn function_application<'a, E: ParseError<&'a str>>(
     src: &'a str,
-) -> nom::IResult<&str, Expression<'a>, E> {
+) -> nom::IResult<&str, Expression, E> {
     // Adjust to make sure priority works as expected.
 
     let arglist = context(
@@ -169,13 +173,13 @@ fn function_application<'a, E: ParseError<&'a str>>(
     )(src)
 }
 
-fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression<'a>, E> {
-    alt((function_application, range, ifelse, single_expression))(src)
+fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+    alt((function_application, range, sum, ifelse, single_expression))(src)
 }
 
 fn single_expression<'a, E: ParseError<&'a str>>(
     src: &'a str,
-) -> nom::IResult<&str, Expression<'a>, E> {
+) -> nom::IResult<&str, Expression, E> {
     alt((
         string,
         integer,
@@ -212,6 +216,16 @@ fn range<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Express
     )(src)
 }
 
+fn sum<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+    map(
+        separated_pair(single_expression, tag("+"), single_expression),
+        |(a, b)| Expression::Sum {
+            a: Box::new(a),
+            b: Box::new(b),
+        },
+    )(src)
+}
+
 // // String
 // fn parse_str(src: &str) -> IResult<&str, &str> {
 //     escaped(alphanumeric, '\\', one_of("\"n\\"))(src)
@@ -226,15 +240,17 @@ fn integer<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression
 }
 
 fn boolean<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
-    alt((map(tag("true"), |_| Expression::ConstBoolean(true)),
-         map(tag("false"), |_| Expression::ConstBoolean(false))))(src)
+    alt((
+        map(tag("true"), |_| Expression::ConstBoolean(true)),
+        map(tag("false"), |_| Expression::ConstBoolean(false)),
+    ))(src)
 }
 
 //endregion
 
 pub fn assignment<'a, E: ParseError<&'a str>>(
     src: &'a str,
-) -> nom::IResult<&'a str, Assignment<'a>, E> {
+) -> nom::IResult<&'a str, Assignment, E> {
     context(
         "Value Assignment",
         map(
@@ -253,7 +269,7 @@ pub fn assignment<'a, E: ParseError<&'a str>>(
     )(src)
 }
 
-// pub fn assignment<'a><'a, E: ParseError<&'a str>>(src: &'a  str) -> nom::IResult<&'a str, Assignment<'a, E>> {
+// pub fn assignment<'a, E: ParseError<&'a str>>(src: &'a  str) -> nom::IResult<&'a str, Assignment<'a, E>> {
 
 //     let typedecl = context(
 //         "Type declaration.",
@@ -265,9 +281,7 @@ pub fn assignment<'a, E: ParseError<&'a str>>(
 //     })(src)
 // }
 
-pub fn parse_tempura<'a, E: ParseError<&'a str>>(
-    src: &'a str,
-) -> nom::IResult<&'a str, Module<'a>, E> {
+pub fn parse_tempura<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module, E> {
     module(src)
     // context(
     //     "Top-level",
@@ -288,9 +302,9 @@ mod tests {
             Ok((
                 "",
                 Expression::IfElse {
-                    guard: Box::new(Expression::ValueRef(Name("foo"))),
-                    body: Box::new(Expression::ValueRef(Name("bar"))),
-                    else_body: Box::new(Expression::ValueRef(Name("baz")))
+                    guard: Box::new(Expression::ValueRef(Name("foo".to_string()))),
+                    body: Box::new(Expression::ValueRef(Name("bar".to_string()))),
+                    else_body: Box::new(Expression::ValueRef(Name("baz".to_string())))
                 }
             ))
         );
@@ -312,10 +326,13 @@ mod tests {
 
     #[test]
     fn test_name() {
-        assert_eq!(name::<VerboseError<&str>>("hello"), Ok(("", Name("hello"))));
+        assert_eq!(
+            name::<VerboseError<&str>>("hello"),
+            Ok(("", Name("hello".to_string())))
+        );
         assert_eq!(
             name::<VerboseError<&str>>("hello world"),
-            Ok((" world", Name("hello")))
+            Ok((" world", Name("hello".to_string())))
         );
     }
 
@@ -342,9 +359,9 @@ mod tests {
             Ok((
                 " ",
                 Expression::ModuleApplication {
-                    mod_name: Name("map"),
+                    mod_name: Name("map".to_string()),
                     arguments: vec![
-                        Expression::ValueRef(Name("fb")),
+                        Expression::ValueRef(Name("fb".to_string())),
                         Expression::Range {
                             from: Box::new(Expression::ConstInteger(0)),
                             to: Box::new(Expression::ConstInteger(99))
@@ -364,7 +381,7 @@ mod tests {
             src2,
             res2,
             Expression::ModuleApplication {
-                mod_name: Name("concat"),
+                mod_name: Name("concat".to_string()),
                 arguments: vec![
                     Expression::ConstString("Hello world: ".to_string()),
                     expression::<VerboseError<&str>>("to_string(i)").unwrap().1,
@@ -377,11 +394,11 @@ mod tests {
             Ok((
                 " ",
                 Expression::ModuleApplication {
-                    mod_name: Name("lines"),
+                    mod_name: Name("lines".to_string()),
                     arguments: vec![Expression::ModuleApplication {
-                        mod_name: Name("map"),
+                        mod_name: Name("map".to_string()),
                         arguments: vec![
-                            Expression::ValueRef(Name("fb")),
+                            Expression::ValueRef(Name("fb".to_string())),
                             Expression::Range {
                                 from: Box::new(Expression::ConstInteger(0)),
                                 to: Box::new(Expression::ConstInteger(99))
@@ -401,7 +418,7 @@ mod tests {
                 "",
                 Assignment {
                     expr: Expression::ConstString("Hello!".to_string()),
-                    name: Name("hello_world"),
+                    name: Name("hello_world".to_string()),
                     valtype: Some(Type::PrimString),
                 }
             ))
@@ -415,7 +432,7 @@ mod tests {
                     expr: expression::<VerboseError<&str>>("lines(map(fb,5..9))")
                         .unwrap()
                         .1,
-                    name: Name("stdout"),
+                    name: Name("stdout".to_string()),
                     valtype: None,
                 }
             ))
@@ -440,9 +457,9 @@ mod tests {
             src,
             module(src),
             Module {
-                name: Name("fb"),
+                name: Name("fb".to_string()),
                 inputs: vec![ModuleInput {
-                    name: Name("i"),
+                    name: Name("i".to_string()),
                     input_type: Type::PrimInt,
                 }],
                 submodules: vec![],
@@ -486,9 +503,9 @@ mod tests {
             src,
             parse_tempura(src),
             Module {
-                name: Name("main"),
+                name: Name("main".to_string()),
                 inputs: vec![ModuleInput {
-                    name: Name("stdin"),
+                    name: Name("stdin".to_string()),
                     input_type: Type::PrimString,
                 }],
                 submodules: vec![

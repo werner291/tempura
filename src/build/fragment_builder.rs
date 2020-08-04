@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use crate::program::{Fragment, Operation, ValueRef, VarType};
 use std::collections::HashMap;
-use crate::program::{Operation, Fragment, ValueRef, VarType};
+use std::rc::Rc;
 
 // #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 // pub struct FragmentRef {
@@ -9,18 +9,19 @@ use crate::program::{Operation, Fragment, ValueRef, VarType};
 // }
 
 pub struct FragmentBuilder<'a> {
+    name: String,
     pub values_by_name: HashMap<String, ValueRef>,
     values: Vec<Operation<ValueRef>>,
-    parent: Option<&'a FragmentBuilder<'a>>
+    parent: Option<&'a FragmentBuilder<'a>>,
 }
 
 impl<'a> FragmentBuilder<'a> {
-
-    pub fn new() -> FragmentBuilder<'static> {
+    pub fn new(name: String) -> FragmentBuilder<'static> {
         FragmentBuilder {
+            name,
             values_by_name: HashMap::new(),
             values: Vec::new(),
-            parent: None
+            parent: None,
         }
     }
 
@@ -28,7 +29,11 @@ impl<'a> FragmentBuilder<'a> {
         match self.values_by_name.get(name) {
             Some(idx) => Some(*idx),
             None => match self.parent {
-                Some(par) => par.lookup_value(name),
+                Some(par) => par.lookup_value(name).map(|vr| match vr {
+                    ValueRef::ContextRef { up, index } => ValueRef::ContextRef { up:up+1, index },
+                    ValueRef::InputRef { up, index } => ValueRef::ContextRef { up:up+1, index },
+                    ValueRef::InstanciatedRef(ni) => ValueRef::InstanciatedRef(ni)
+                }),
                 None => None,
             },
         }
@@ -46,23 +51,22 @@ impl<'a> FragmentBuilder<'a> {
         self.alloc_value(Operation::Const(VarType::Fragment(Rc::new(frag))))
     }
 
-    pub fn derive_child(&'a self) -> FragmentBuilder<'a> {
+    pub fn derive_child(&'a self, name: String) -> FragmentBuilder<'a> {
         FragmentBuilder {
+            name,
             values_by_name: HashMap::new(),
             values: Vec::new(),
             parent: Some(self),
         }
     }
 
-    pub fn build(self, output: ValueRef) -> Fragment<ValueRef> {        
-
+    pub fn build(self, output: ValueRef) -> Fragment<ValueRef> {
         Fragment {
-            nodes: self.values, 
+            name: self.name,
+            nodes: self.values,
             output: match output {
-                ValueRef::ContextRef {
-                    up: 0, index
-                } => index,
-                _ => panic!("Output must be a same-level contextref.")
+                ValueRef::ContextRef { up: 0, index } => index,
+                _ => panic!("Output must be a same-level contextref."),
             },
         }
     }
