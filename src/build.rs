@@ -1,7 +1,6 @@
 use crate::ast::*;
 use crate::program::*;
 use std::collections::HashMap;
-use std::rc::Rc;
 use topological_sort::TopologicalSort;
 
 mod fragment_builder;
@@ -44,6 +43,7 @@ fn build_value<'a>(expr: Expression<'a>, env: &mut FragmentBuilder<'a>) -> Value
 
     match expr {
         Expression::ConstInteger(i) => env.alloc_value(Operation::Const(VarType::Int(i))),
+        Expression::ConstBoolean(b) => env.alloc_value(Operation::Const(VarType::Bool(b))),
         Expression::ConstString(s) => {
             let charvec = s
                 .chars()

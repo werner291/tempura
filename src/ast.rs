@@ -50,6 +50,7 @@ pub struct ModuleInput<'a> {
 pub enum Expression<'a> {
     ConstString(String),
     ConstInteger(i64),
+    ConstBoolean(bool),
     ModuleApplication {
         mod_name: Name<'a>,
         arguments: Vec<Expression<'a>>,
@@ -86,6 +87,7 @@ impl<'a> Expression<'a> {
         match self {
             Expression::ConstString(_) => vec![],
             Expression::ConstInteger(_) => vec![],
+            Expression::ConstBoolean(_) => vec![],
             Expression::ValueRef(n) => vec![Dependency::Value(n.0.to_string())],
             Expression::Range { from, to } => from
                 .collect_dependencies()

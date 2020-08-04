@@ -179,6 +179,7 @@ fn single_expression<'a, E: ParseError<&'a str>>(
     alt((
         string,
         integer,
+        boolean,
         valueref,
         delimited(char('('), expression, char(')')),
     ))(src)
@@ -222,6 +223,11 @@ fn string<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression,
 
 fn integer<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     map(parse_int, Expression::ConstInteger)(src)
+}
+
+fn boolean<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
+    alt((map(tag("true"), |_| Expression::ConstBoolean(true)),
+         map(tag("false"), |_| Expression::ConstBoolean(false))))(src)
 }
 
 //endregion
