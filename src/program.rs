@@ -14,6 +14,7 @@ pub struct FragIndex(pub usize);
 
 #[derive(Debug, Clone)]
 pub enum VarType {
+    Null,
     Int(i64),
     Bool(bool),
     Char(char),
@@ -81,6 +82,7 @@ impl VarType {
 
     pub fn render_as_string(&self) -> String {
         match self {
+            VarType::Null => "null".to_string(),
             VarType::Int(i) => i.to_string(),
             VarType::Bool(b) => b.to_string(),
             VarType::Char(c) =>  c.to_string(),
@@ -96,6 +98,7 @@ use std::hash::Hash;
 // #[derive(PartialEq, Eq, Debug)]
 #[derive(Clone, Debug)]
 pub enum Operation<I: Clone + Copy + Debug> {
+    External,
     Const(VarType),
     Vector(Vec<I>),
     Sum(I, I),
@@ -109,6 +112,7 @@ impl<I: Copy + Debug> Operation<I> {
     pub fn dependencies(&self) -> Vec<I> {
         use Operation::*;
         match self {
+            External => vec![],
             Const(_) => Vec::new(),
             Vector(v) => v.clone(),
             Sum(a, b) => vec![*a, *b],
@@ -154,7 +158,7 @@ pub struct Fragment<I: Copy + Debug> {
     // Current algorithm is kinda expensive.
     pub name: String,
     pub nodes: Vec<Operation<I>>,
-    pub output: usize,
+    pub output: I,
 }
 
 impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
@@ -183,7 +187,7 @@ impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
             //     ValueRef::InstanciatedRef(n) => n,
             //     _ => panic!("cannot finalize with remaining hole")
             // }).collect(),
-            output: self.output,
+            output: self.output.finalize(),
         }
     }
 }
@@ -198,6 +202,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
         use Operation::*;
 
         match self {
+            External => External,
             Const(c) => Const(c.fill_in(indices, inputs, depth)),
             Vector(v) => Vector(
                 v.iter()
@@ -231,6 +236,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
         use Operation::*;
 
         match self {
+            External => External,
             Const(c) => Const(c.finalize()),
             Vector(v) => Vector(v.iter().map(|n| n.finalize()).collect()),
             Sum(a, b) => Sum(a.finalize(), b.finalize()),
@@ -247,6 +253,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
 impl Lacunary<VarType> for VarType {
     fn fill_in(&self, indices: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> VarType {
         match self {
+            VarType::Null => VarType::Null,
             VarType::Fragment(f) => {
                 VarType::Fragment(Rc::new(f.fill_in(indices, inputs, depth + 1)))
             }
@@ -261,6 +268,7 @@ impl Lacunary<VarType> for VarType {
 
     fn finalize(self) -> VarType {
         match self {
+            VarType::Null => VarType::Null,
             VarType::Fragment(f) => VarType::Fragment(f),
             VarType::Bool(b) => VarType::Bool(b),
             VarType::Int(i) => VarType::Int(i),

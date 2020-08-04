@@ -64,10 +64,7 @@ impl<'a> FragmentBuilder<'a> {
         Fragment {
             name: self.name,
             nodes: self.values,
-            output: match output {
-                ValueRef::ContextRef { up: 0, index } => index,
-                _ => panic!("Output must be a same-level contextref."),
-            },
+            output: output,
         }
     }
 }

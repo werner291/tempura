@@ -1,7 +1,5 @@
 use crate::quoted_string;
 
-use quickcheck::{Arbitrary, Gen};
-
 // Compiler keeps waning about `convert_error` and `VerboseError` despite them being used.
 #[allow(unused_imports)]
 use nom::error::{context, convert_error, ParseError, VerboseError};

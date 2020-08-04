@@ -23,6 +23,8 @@ use nom::error::VerboseError;
 use run::*;
 use std::process::exit;
 use std::{env, fs};
+use std::io;
+use program::VarType;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -49,5 +51,25 @@ fn main() {
 
     println!("\u{001B}[32mBuild successful...");
 
-    println!("{}", rte.pull(rte.stdout.unwrap()).stringify().unwrap());
+    rte.listen(rte.stdout.unwrap(), true, Box::new(|_t,c| {
+        match c {
+            VarType::Char(c) => println!("{}",c),
+            VarType::Null => (),
+            _ => panic!("stdout should be char stream")
+        }
+        
+    }));
+
+    let mut input = String::new();
+    loop{
+        match io::stdin().read_line(&mut input) {
+            Ok(n) => {
+                for c in input.chars() {
+                    rte.put_current(rte.stdin.unwrap(), VarType::Char(c));
+                }
+            }
+            Err(error) => println!("error: {}", error),
+        }
+    }
+    // println!("{}", .stringify().unwrap());
 }

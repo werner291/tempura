@@ -53,7 +53,12 @@ fn build_value(expr: Expression, env: &mut FragmentBuilder) -> ValueRef {
                 .collect();
             env.alloc_value(Vector(charvec))
         }
-        Expression::ValueRef(Name(n)) => env.lookup_value(&n).unwrap(),
+        Expression::ValueRef(Name(n)) => {
+            match env.lookup_value(&n) {
+                Some(r) => r,
+                None => panic!("Reference to non-existent value `{}`.", n)
+            }
+        },
         Expression::ModuleApplication {
             mod_name,
             arguments,
@@ -148,7 +153,7 @@ pub fn build_runtime(main_module: Module) -> Result<RuntimeEnv, &'static str> {
         Fragment {
             name: "to_string".to_string(),
             nodes: vec![Operation::ToString(ValueRef::InputRef { up: 0, index: 0 })],
-            output: 0,
+            output: ValueRef::ContextRef { up: 0, index: 0 },
         },
         Fragment {
             name: "concat".to_string(),
@@ -156,7 +161,7 @@ pub fn build_runtime(main_module: Module) -> Result<RuntimeEnv, &'static str> {
                 ValueRef::InputRef { up: 0, index: 0 },
                 ValueRef::InputRef { up: 0, index: 1 },
             )],
-            output: 0,
+            output: ValueRef::ContextRef { up: 0, index: 0 },
         }
     ];
 
@@ -169,11 +174,15 @@ pub fn build_runtime(main_module: Module) -> Result<RuntimeEnv, &'static str> {
         fb.values_by_name.insert(name, ValueRef::InstanciatedRef(n));
     }
 
+    let stdin = re.node_from_operation(Operation::External);
+    fb.values_by_name.insert("stdin".to_string(), ValueRef::InstanciatedRef(stdin));
+
     let mainmod = build_module(main_module, &fb).unwrap();
 
     let stdout = re.instantiate_fragment(&mainmod, vec![]);
 
     re.stdout = Some(stdout);
+    re.stdin = Some(stdin);
 
     Ok(re)
 }
