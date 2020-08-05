@@ -64,7 +64,7 @@ impl<'a> FragmentBuilder<'a> {
         Fragment {
             name: self.name,
             nodes: self.values,
-            output: output,
+            output,
         }
     }
 }

@@ -175,7 +175,7 @@ impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
                 .iter()
                 .map(|n| n.fill_in(nodes, inputs, depth))
                 .collect(),
-            output: self.output,
+            output: self.output.fill_in(nodes, inputs, depth),
         }
     }
 
@@ -296,7 +296,7 @@ impl Lacunary<NodeIndex> for ValueRef {
     fn finalize(self) -> NodeIndex {
         match self {
             ValueRef::InstanciatedRef(ni) => ni,
-            _ => panic!("trying to finalize an incomplete ValueRef"),
+            _ => panic!("trying to finalize an incomplete ValueRef: {:?}", self),
         }
     }
 }
