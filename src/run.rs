@@ -4,6 +4,7 @@ use generational_arena::{Arena, Index};
 use std::rc::Rc;
 
 pub struct Node {
+    last_update: Time,
     value_cache: Option<VarType>,
     operation: Operation<NodeIndex>,
     dependents: Vec<NodeIndex>,
@@ -12,19 +13,21 @@ pub struct Node {
 }
 
 pub struct RuntimeEnv {
+    current_time: Time,
     nodes: Arena<Node>,
     pub stdout: Option<NodeIndex>,
     pub stdin: Option<NodeIndex>
 }
 
-type Time = ();
+type Time = u64;
 
 impl RuntimeEnv {
     pub fn new() -> RuntimeEnv {
         RuntimeEnv {
             nodes: Arena::new(),
             stdout: None,
-            stdin: None
+            stdin: None,
+            current_time: 0
         }
     }
 
@@ -37,6 +40,7 @@ impl RuntimeEnv {
             dependents: Vec::new(),
             listeners: Vec::new(),
             being_computed: false,
+            last_update: 0
         }));
 
         for dep in dependencies {
@@ -81,10 +85,7 @@ impl RuntimeEnv {
             },
             ToString(a) => {
                 VarType::from_string(&self.pull_once(a).render_as_string())
-            }
-
-            //.unpack_int().unwrap() + self.pull(b).unpack_int().unwrap(),
-            ,
+            },
             IfElse(g, b, eb) => {
                 if self.pull_once(g).unpack_bool().unwrap() {
                     self.pull_once(b)
@@ -100,6 +101,7 @@ impl RuntimeEnv {
         };
         self.nodes[idx.0].value_cache = Some(new_val.clone());
         self.nodes[idx.0].being_computed = false;
+        self.nodes[idx.0].last_update = self.current_time;
         new_val
     }
 
@@ -114,24 +116,29 @@ impl RuntimeEnv {
 
     pub fn listen(&mut self, idx: NodeIndex, include_current: bool, cb: Box<dyn Fn(Time, &VarType)>) {
         if include_current {
-            cb((), &self.pull_once(idx))
+            cb(self.current_time, &self.pull_once(idx))
         }
         self.nodes[idx.0].listeners.push(cb);
     }
 
     pub fn put_current(&mut self, idx: NodeIndex, value: VarType) -> Time {
+        self.current_time += 1;
         self.nodes[idx.0].value_cache = Some(value);
+        self.nodes[idx.0].last_update = self.current_time;
         self.update_dependents(idx);
+        self.current_time
     }
 
     pub fn update_dependents(&mut self, idx: NodeIndex) {
         for dep in self.nodes[idx.0].dependents.clone() {
-            self.compute_value(dep);
-            self.update_dependents(dep);
+            if self.nodes[idx.0].last_update < self.current_time {
+                self.compute_value(dep);
+                self.update_dependents(dep);
+            }
         }
         let cur = self.pull_once(idx);
         for cb in self.nodes[idx.0].listeners.iter() {
-            cb((), &cur);
+            cb(self.current_time, &cur);
         }
     }
 
@@ -140,7 +147,6 @@ impl RuntimeEnv {
         frag: &Fragment<ValueRef>,
         arguments: Vec<NodeIndex>,
     ) -> NodeIndex {
-
         let indices = self.nodes.insert_many_with(frag.nodes.len(), |indices| {
             let noderefs: Vec<NodeIndex> = indices.iter().cloned().map(NodeIndex).collect();
 
@@ -153,7 +159,8 @@ impl RuntimeEnv {
                     being_computed: false,
                     operation: op,
                     dependents: vec![],
-                    listeners: vec![]
+                    listeners: vec![],
+                    last_update: 0
                 })
                 .collect()
         });

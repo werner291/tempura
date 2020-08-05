@@ -51,17 +51,17 @@ fn main() {
 
     println!("\u{001B}[32mBuild successful...");
 
-    rte.listen(rte.stdout.unwrap(), true, Box::new(|_t,c| {
+    rte.listen(rte.stdout.unwrap(), false, Box::new(|_t,c| {
         match c {
-            VarType::Char(c) => println!("{}",c),
+            VarType::Char(c) => print!("{}",c),
             VarType::Null => (),
             _ => panic!("stdout should be char stream")
         }
-        
     }));
 
-    let mut input = String::new();
+    
     loop{
+        let mut input = String::new();
         match io::stdin().read_line(&mut input) {
             Ok(n) => {
                 for c in input.chars() {
