@@ -130,8 +130,9 @@ impl RuntimeEnv {
     }
 
     pub fn update_dependents(&mut self, idx: NodeIndex) {
+
         for dep in self.nodes[idx.0].dependents.clone() {
-            if self.nodes[idx.0].last_update < self.current_time {
+            if self.nodes[dep.0].last_update < self.current_time {
                 self.compute_value(dep);
                 self.update_dependents(dep);
             }
