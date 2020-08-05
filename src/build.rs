@@ -122,13 +122,27 @@ pub fn build_module(
         }
     }
 
-    for (name, modl) in mod_index.iter() {
-        for ref_to in modl.collect_dependencies() {
-            ts.add_dependency(Dependency::Module(name.to_string()), ref_to);
+    while let Some(dep) = ts.pop() {
+        match dep {
+            Dependency::Module(modname) => {
+                if fb.lookup_value(&modname).is_none() {
+                    let modl = mod_index.remove(modname.as_str()).unwrap();
+                    let frag = build_module(modl, &fb)?;
+                    let fref = fb.alloc_fragment(frag);
+                    fb.values_by_name.insert(modname, fref);
+                }
+            }
+            Dependency::Value(valname) => {
+                if fb.lookup_value(&valname).is_none() {
+                    let val = ast_index.remove(valname.as_str()).unwrap();
+                    let val_built = build_value(val.expr, &mut fb);
+                    fb.values_by_name.insert(valname, val_built);
+                }
+            }
         }
     }
 
-    while let Some(dep) = ts.pop() {
+    for dep in modu.output.collect_dependencies() {
         match dep {
             Dependency::Module(modname) => {
                 if fb.lookup_value(&modname).is_none() {
