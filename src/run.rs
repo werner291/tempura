@@ -1,14 +1,16 @@
 use crate::program::*;
 /// Contains code necessary to run a Tempura program in built form.
-use generational_arena::{Arena, Index};
+use generational_arena::{Arena};
 use std::rc::Rc;
+use crate::ast;
+
 
 pub struct Node {
     last_update: Time,
     value_cache: Option<VarType>,
     operation: Operation<NodeIndex>,
     dependents: Vec<NodeIndex>,
-    listeners: Vec<Box<dyn Fn(Time,&VarType)>>,
+    listeners: Vec<Box<dyn Fn(Time, &VarType)>>,
     being_computed: bool,
 }
 
@@ -17,8 +19,7 @@ pub struct RuntimeEnv {
     nodes: Arena<Node>,
     pub stdout: Option<NodeIndex>,
     pub stdin: Option<NodeIndex>,
-    pub clock: Option<NodeIndex>
-
+    pub clock: Option<NodeIndex>,
 }
 
 type Time = u64;
@@ -30,7 +31,7 @@ impl RuntimeEnv {
             stdout: None,
             stdin: None,
             clock: None,
-            current_time: 0
+            current_time: 0,
         }
     }
 
@@ -43,7 +44,7 @@ impl RuntimeEnv {
             dependents: Vec::new(),
             listeners: Vec::new(),
             being_computed: false,
-            last_update: 0
+            last_update: 0,
         }));
 
         for dep in dependencies {
@@ -67,44 +68,46 @@ impl RuntimeEnv {
         let new_val = match node.operation.clone() {
             External => node.value_cache.clone().unwrap_or(VarType::Null),
             Const(v) => v,
-            Vector(v) => {
-                VarType::Vector(Rc::new(v.iter().map(|idx_1| self.pull_once(*idx_1)).collect()))
-            }
-            Sum(a, b) => VarType::Int(
-                self.pull_once(a).unpack_int().unwrap() + self.pull_once(b).unpack_int().unwrap(),
-            ),
-            Concat(a, b) => {
-                let va: Rc<Vec<VarType>> = self
-                    .pull_once(a)
-                    .unpack_vector()
-                    .expect("can only concat vectors");
-                let vb: Rc<Vec<VarType>> = self
-                    .pull_once(b)
-                    .unpack_vector()
-                    .expect("can only concat vectors");
-                VarType::Vector(Rc::new(
-                    va.iter().cloned().chain(vb.iter().cloned()).collect(),
-                ))
+            Vector(v) => VarType::Vector(Rc::new(
+                v.iter().map(|idx_1| self.pull_once(*idx_1)).collect(),
+            )),
+            BinaryOp(a, b, opr) => {
+                let aa = self.pull_once(a);
+                let bb = self.pull_once(b);
+
+                match opr {
+                    ast::BinaryOp::Sum => VarType::Int(aa.unpack_int().unwrap() + bb.unpack_int().unwrap()),
+                    ast::BinaryOp::Concat => VarType::Vector(Rc::new(
+                        aa.unpack_vector().unwrap().iter().cloned()
+                            .chain(bb.unpack_vector().unwrap().iter().cloned()).collect(),
+                    )),
+                    ast::BinaryOp::Range => unimplemented!(),
+                    ast::BinaryOp::Eq => VarType::Bool(match aa {
+                        VarType::Bool(aa) => aa == bb.unpack_bool().unwrap(),
+                        VarType::Char(aa) => aa == bb.unpack_char().unwrap(),
+                        VarType::Int(aa) => aa == bb.unpack_int().unwrap(),
+                        _ => panic!("Comparison unsupported for vartype.")
+                    }),
+                    ast::BinaryOp::Gt  => VarType::Bool(aa.unpack_int().unwrap() > bb.unpack_int().unwrap()),
+                    ast::BinaryOp::Geq => VarType::Bool(aa.unpack_int().unwrap() >= bb.unpack_int().unwrap()),
+                    ast::BinaryOp::Lt  => VarType::Bool(aa.unpack_int().unwrap() < bb.unpack_int().unwrap()),
+                    ast::BinaryOp::Leq => VarType::Bool(aa.unpack_int().unwrap() <= bb.unpack_int().unwrap()),
+                    ast::BinaryOp::Index =>
+                        aa.unpack_vector().expect("can only index into a vector")[bb.unpack_int().expect("can only index with an int index") as usize].clone()
+                }
             },
-            ToString(a) => {
-                VarType::from_string(&self.pull_once(a).render_as_string())
-            },
+            ToString(a) => VarType::from_string(&self.pull_once(a).render_as_string()),
             IfElse(g, b, eb) => {
                 if self.pull_once(g).unpack_bool().unwrap() {
                     self.pull_once(b)
                 } else {
                     self.pull_once(eb)
                 }
-            },
+            }
             ApplyFragment(fref, args) => {
                 let fragref = self.pull_once(fref).unpack_fragment().unwrap().clone();
                 let outref = self.instantiate_fragment(fragref.as_ref(), args);
                 self.pull_once(outref)
-            },
-            Index(v,i) => {
-                let ve = self.pull_once(v).unpack_vector().expect("can only index into a vector");
-                let id = self.pull_once(i).unpack_int().expect("can only index with an int index");
-                ve[id as usize].clone()
             }
         };
         self.nodes[idx.0].value_cache = Some(new_val.clone());
@@ -122,7 +125,12 @@ impl RuntimeEnv {
         }
     }
 
-    pub fn listen(&mut self, idx: NodeIndex, include_current: bool, cb: Box<dyn Fn(Time, &VarType)>) {
+    pub fn listen(
+        &mut self,
+        idx: NodeIndex,
+        include_current: bool,
+        cb: Box<dyn Fn(Time, &VarType)>,
+    ) {
         if include_current {
             cb(self.current_time, &self.pull_once(idx))
         }
@@ -138,7 +146,6 @@ impl RuntimeEnv {
     }
 
     pub fn update_dependents(&mut self, idx: NodeIndex) {
-
         for dep in self.nodes[idx.0].dependents.clone() {
             if self.nodes[dep.0].last_update < self.current_time {
                 self.compute_value(dep);
@@ -153,7 +160,7 @@ impl RuntimeEnv {
 
     pub fn instantiate_fragment(
         &mut self,
-        frag: &Fragment<ValueRef>,
+        frag: &Fragment<LacunaryRef>,
         arguments: Vec<NodeIndex>,
     ) -> NodeIndex {
         let indices = self.nodes.insert_many_with(frag.nodes.len(), |indices| {
@@ -169,7 +176,7 @@ impl RuntimeEnv {
                     operation: op,
                     dependents: vec![],
                     listeners: vec![],
-                    last_update: 0
+                    last_update: 0,
                 })
                 .collect()
         });
@@ -182,6 +189,8 @@ impl RuntimeEnv {
 
         let noderefs: Vec<NodeIndex> = indices.iter().cloned().map(NodeIndex).collect();
 
-        frag.output.fill_in(noderefs.as_slice(), arguments.as_slice(), 0).finalize()
+        frag.output
+            .fill_in(noderefs.as_slice(), arguments.as_slice(), 0)
+            .finalize()
     }
 }

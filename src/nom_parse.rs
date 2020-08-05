@@ -18,14 +18,14 @@ use crate::ast::*;
 
 // Whitespace
 
-fn whitespace<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, &'a str, E> {
+pub fn whitespace<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, &'a str, E> {
     let chars = " \t\r\n";
     take_while(move |c| chars.contains(c))(src)
 }
 
 //region Name
 
-fn name<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Name, E> {
+pub fn name<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Name, E> {
     map(
         take_while1(|item: char| item.is_alphanum() || item == '_'),
         |s: &str| Name(s.to_string()),
@@ -35,7 +35,7 @@ fn name<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Name, E>
 
 //region Expression
 
-fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Expression, E> {
+pub fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Expression, E> {
     context(
         "if-then-else",
         map(
@@ -63,11 +63,11 @@ fn ifelse<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Exp
 }
 
 enum AssigmentOrSubmodule {
-    Assignment(Assignment),
-    Submodule(Module),
+    Assignment(AssignmentAST),
+    Submodule(FragmentAST),
 }
 
-pub fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module, E> {
+pub fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, FragmentAST, E> {
     use AssigmentOrSubmodule::*;
 
     let mod_input = map(
@@ -124,7 +124,7 @@ pub fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str,
                     }
                 }
 
-                Module {
+                FragmentAST {
                     name,
                     inputs,
                     assignments,
@@ -136,7 +136,7 @@ pub fn module<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str,
     )(src)
 }
 
-fn ttype<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Type, E> {
+pub fn ttype<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Type, E> {
     context(
         "type",
         alt((
@@ -146,7 +146,7 @@ fn ttype<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Type
     )(src)
 }
 
-fn function_application<'a, E: ParseError<&'a str>>(
+pub fn function_application<'a, E: ParseError<&'a str>>(
     src: &'a str,
 ) -> nom::IResult<&str, Expression, E> {
     // Adjust to make sure priority works as expected.
@@ -171,22 +171,30 @@ fn function_application<'a, E: ParseError<&'a str>>(
     )(src)
 }
 
-fn container_index<'a, E: ParseError<&'a str>>(
-    src: &'a str,
-) -> nom::IResult<&str, Expression, E> {
+pub fn container_index<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
     context(
         "container index",
-        map(pair(single_expression, delimited(char('['), expression, preceded(whitespace,char(']')))), |(cont, idx)| {
-            Expression::ContainerIndexing(Box::new(cont), Box::new(idx))
-        }),
+        map(
+            pair(
+                single_expression,
+                delimited(char('['), expression, preceded(whitespace, char(']'))),
+            ),
+            |(cont, idx)| Expression::BinaryOp(Box::new(cont), Box::new(idx), BinaryOp::Index),
+        ),
     )(src)
 }
 
-fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
-    alt((function_application, container_index, range, sum, ifelse, single_expression))(src)
+pub fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+    alt((
+        function_application,
+        container_index,
+        infix_operation,
+        ifelse,
+        single_expression,
+    ))(src)
 }
 
-fn single_expression<'a, E: ParseError<&'a str>>(
+pub fn single_expression<'a, E: ParseError<&'a str>>(
     src: &'a str,
 ) -> nom::IResult<&str, Expression, E> {
     alt((
@@ -198,11 +206,11 @@ fn single_expression<'a, E: ParseError<&'a str>>(
     ))(src)
 }
 
-fn valueref<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
-    map(name, Expression::ValueRef)(src)
+pub fn valueref<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+    map(name, Expression::LacunaryRef)(src)
 }
 
-fn parse_int<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, i64, E> {
+pub fn parse_int<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, i64, E> {
     map(
         pair(opt(char('-')), digit1),
         |(sgn, digits): (Option<char>, &str)| {
@@ -215,40 +223,34 @@ fn parse_int<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, i64
     )(src)
 }
 
-fn range<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+pub fn infix_operation<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
+    
+    let operator = alt((
+        map(tag(".."), |_| BinaryOp::Range),
+        map(tag("+"),  |_| BinaryOp::Sum),
+        map(tag("<>"), |_| BinaryOp::Concat),
+        map(tag(">="), |_| BinaryOp::Geq),
+        map(tag("=="), |_| BinaryOp::Eq),
+        map(tag("<="), |_| BinaryOp::Leq),
+        map(tag(">"), |_| BinaryOp::Lt),
+        map(tag("<"), |_| BinaryOp::Gt)
+    ));
+
     map(
-        separated_pair(single_expression, tag(".."), single_expression),
-        |(from, until)| Expression::Range {
-            from: Box::new(from),
-            to: Box::new(until),
-        },
+        tuple((preceded(whitespace, single_expression), preceded(whitespace, operator), preceded(whitespace, single_expression))),
+        |(a, o, b)| Expression::BinaryOp(Box::new(a),Box::new(b),o)
     )(src)
 }
 
-fn sum<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
-    map(
-        separated_pair(single_expression, tag("+"), single_expression),
-        |(a, b)| Expression::Sum {
-            a: Box::new(a),
-            b: Box::new(b),
-        },
-    )(src)
-}
-
-// // String
-// fn parse_str(src: &str) -> IResult<&str, &str> {
-//     escaped(alphanumeric, '\\', one_of("\"n\\"))(src)
-// }
-
-fn string<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
+pub fn string<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     map(quoted_string::parse_string, Expression::ConstString)(src)
 }
 
-fn integer<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
+pub fn integer<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     map(parse_int, Expression::ConstInteger)(src)
 }
 
-fn boolean<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
+pub fn boolean<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression, E> {
     alt((
         map(tag("true"), |_| Expression::ConstBoolean(true)),
         map(tag("false"), |_| Expression::ConstBoolean(false)),
@@ -259,7 +261,7 @@ fn boolean<'a, E: ParseError<&'a str>>(src: &'a str) -> IResult<&str, Expression
 
 pub fn assignment<'a, E: ParseError<&'a str>>(
     src: &'a str,
-) -> nom::IResult<&'a str, Assignment, E> {
+) -> nom::IResult<&'a str, AssignmentAST, E> {
     context(
         "Value Assignment",
         map(
@@ -269,7 +271,7 @@ pub fn assignment<'a, E: ParseError<&'a str>>(
                 preceded(whitespace, char('=')),
                 preceded(whitespace, expression),
             )),
-            |(name, typedecl, _, expr)| Assignment {
+            |(name, typedecl, _, expr)| AssignmentAST {
                 name,
                 valtype: typedecl,
                 expr,
@@ -278,19 +280,7 @@ pub fn assignment<'a, E: ParseError<&'a str>>(
     )(src)
 }
 
-// pub fn assignment<'a, E: ParseError<&'a str>>(src: &'a  str) -> nom::IResult<&'a str, Assignment<'a, E>> {
-
-//     let typedecl = context(
-//         "Type declaration.",
-//         opt(preceded(tuple((whitespace, char(':'))), ttype)),
-//     );
-//     map(tuple((typedecl, assignment_untyped)), |(t, a)| Assignment {
-//         valtype: t,
-//         ..a
-//     })(src)
-// }
-
-pub fn parse_tempura<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, Module, E> {
+pub fn parse_tempura<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&'a str, FragmentAST, E> {
     module(src)
     // context(
     //     "Top-level",
@@ -311,23 +301,9 @@ mod tests {
             Ok((
                 "",
                 Expression::IfElse {
-                    guard: Box::new(Expression::ValueRef(Name("foo".to_string()))),
-                    body: Box::new(Expression::ValueRef(Name("bar".to_string()))),
-                    else_body: Box::new(Expression::ValueRef(Name("baz".to_string())))
-                }
-            ))
-        );
-    }
-
-    #[test]
-    fn test_range() {
-        assert_eq!(
-            range::<VerboseError<&str>>("5..9"),
-            Ok((
-                "",
-                Expression::Range {
-                    from: Box::new(Expression::ConstInteger(5)),
-                    to: Box::new(Expression::ConstInteger(9))
+                    guard: Box::new(Expression::LacunaryRef(Name("foo".to_string()))),
+                    body: Box::new(Expression::LacunaryRef(Name("bar".to_string()))),
+                    else_body: Box::new(Expression::LacunaryRef(Name("baz".to_string())))
                 }
             ))
         );
@@ -370,11 +346,11 @@ mod tests {
                 Expression::ModuleApplication {
                     mod_name: Name("map".to_string()),
                     arguments: vec![
-                        Expression::ValueRef(Name("fb".to_string())),
-                        Expression::Range {
-                            from: Box::new(Expression::ConstInteger(0)),
-                            to: Box::new(Expression::ConstInteger(99))
-                        }
+                        Expression::LacunaryRef(Name("fb".to_string())),
+                        Expression::BinaryOp(
+                            Box::new(Expression::ConstInteger(0)),
+                            Box::new(Expression::ConstInteger(99)),
+                            BinaryOp::Range)
                     ]
                 }
             ))
@@ -397,26 +373,6 @@ mod tests {
                 ],
             },
         );
-
-        assert_eq!(
-            function_application::<VerboseError<&str>>("lines(map(fb,0..99)) "),
-            Ok((
-                " ",
-                Expression::ModuleApplication {
-                    mod_name: Name("lines".to_string()),
-                    arguments: vec![Expression::ModuleApplication {
-                        mod_name: Name("map".to_string()),
-                        arguments: vec![
-                            Expression::ValueRef(Name("fb".to_string())),
-                            Expression::Range {
-                                from: Box::new(Expression::ConstInteger(0)),
-                                to: Box::new(Expression::ConstInteger(99))
-                            }
-                        ]
-                    }]
-                }
-            ))
-        );
     }
 
     #[test]
@@ -425,7 +381,7 @@ mod tests {
             assignment::<VerboseError<&str>>("hello_world : str= \"Hello!\""),
             Ok((
                 "",
-                Assignment {
+                AssignmentAST {
                     expr: Expression::ConstString("Hello!".to_string()),
                     name: Name("hello_world".to_string()),
                     valtype: Some(Type::PrimString),
@@ -437,7 +393,7 @@ mod tests {
             assignment::<VerboseError<&str>>("stdout = lines(map(fb,5..9))"),
             Ok((
                 "",
-                Assignment {
+                AssignmentAST {
                     expr: expression::<VerboseError<&str>>("lines(map(fb,5..9))")
                         .unwrap()
                         .1,
@@ -465,7 +421,7 @@ mod tests {
         check_result(
             src,
             module(src),
-            Module {
+            FragmentAST {
                 name: Name("fb".to_string()),
                 inputs: vec![ModuleInput {
                     name: Name("i".to_string()),
@@ -511,7 +467,7 @@ mod tests {
         check_result(
             src,
             parse_tempura(src),
-            Module {
+            FragmentAST {
                 name: Name("main".to_string()),
                 inputs: vec![ModuleInput {
                     name: Name("stdin".to_string()),

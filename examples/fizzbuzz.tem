@@ -1,5 +1,5 @@
 
 mod main() {
     t = "Suspendisse venenatis feugiat tempus. Etiam finibus tellus a orci sagittis aliquet. Proin a enim maximus, faucibus leo in, elementum lacus."
-    t["banana"]
+    t[clock]
 }

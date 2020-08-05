@@ -1,17 +1,17 @@
 use crate::ast::*;
-use nom::error::VerboseError;
-use quickcheck::quickcheck;
+// use nom::error::VerboseError;
+// use quickcheck::quickcheck;
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
 
-impl Arbitrary for Module {
+impl Arbitrary for FragmentAST {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         arbitrary_module(g, 0)
     }
 }
 
-fn arbitrary_module<G: Gen>(g: &mut G, depth: usize) -> Module {
-    Module {
+fn arbitrary_module<G: Gen>(g: &mut G, depth: usize) -> FragmentAST {
+    FragmentAST {
         name: Arbitrary::arbitrary(g),
         inputs: Arbitrary::arbitrary(g),
         assignments: Arbitrary::arbitrary(g),
@@ -35,9 +35,9 @@ impl quickcheck::Arbitrary for ModuleInput {
     }
 }
 
-impl quickcheck::Arbitrary for Assignment {
+impl quickcheck::Arbitrary for AssignmentAST {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        Assignment {
+        AssignmentAST {
             name: Arbitrary::arbitrary(g),
             valtype: Arbitrary::arbitrary(g),
             expr: arbitrary_expression(g, 0),
@@ -56,16 +56,12 @@ impl quickcheck::Arbitrary for Type {
     }
 }
 
-use rand::distributions::Alphanumeric;
-
 impl Arbitrary for Name {
     fn arbitrary<G: Gen>(g: &mut G) -> Name {
-
         let az = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-        let s: String = 
-            (1u32..g.gen_range(1, 30))
-            .map(|_| az[g.gen_range(0,az.len())] as char)
+        let s: String = (1u32..g.gen_range(1, 30))
+            .map(|_| az[g.gen_range(0, az.len())] as char)
             .collect();
         Name(s)
     }
@@ -101,7 +97,7 @@ fn arbitrary_expression<G: Gen>(g: &mut G, depth: usize) -> Expression {
             0 => Expression::ConstBoolean(g.gen()),
             1 => Expression::ConstInteger(g.gen()),
             2 => Expression::ConstString(Arbitrary::arbitrary(g)),
-            3 => Expression::ValueRef(Arbitrary::arbitrary(g)),
+            3 => Expression::LacunaryRef(Arbitrary::arbitrary(g)),
             _ => panic!("option should never be generated"),
         }
     }

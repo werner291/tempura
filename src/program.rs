@@ -1,16 +1,11 @@
 use generational_arena::Index;
+use itertools::join;
 use std::iter;
 use std::rc::Rc;
-use itertools::join;
+use crate::ast::BinaryOp;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub struct NodeIndex(pub Index);
-
-// #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
-// pub struct FragNodeIndex(pub usize);
-
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
-pub struct FragIndex(pub usize);
 
 #[derive(Debug, Clone)]
 pub enum VarType {
@@ -19,7 +14,7 @@ pub enum VarType {
     Bool(bool),
     Char(char),
     Vector(Rc<Vec<VarType>>),
-    Fragment(Rc<Fragment<ValueRef>>),
+    Fragment(Rc<Fragment<LacunaryRef>>),
 }
 
 impl VarType {
@@ -72,7 +67,7 @@ impl VarType {
         VarType::Vector(Rc::new(string.chars().map(VarType::Char).collect()))
     }
 
-    pub fn unpack_fragment(&self) -> Option<&Rc<Fragment<ValueRef>>> {
+    pub fn unpack_fragment(&self) -> Option<&Rc<Fragment<LacunaryRef>>> {
         if let VarType::Fragment(f) = self {
             Some(f)
         } else {
@@ -85,9 +80,11 @@ impl VarType {
             VarType::Null => "null".to_string(),
             VarType::Int(i) => i.to_string(),
             VarType::Bool(b) => b.to_string(),
-            VarType::Char(c) =>  c.to_string(),
+            VarType::Char(c) => c.to_string(),
             VarType::Fragment(f) => format!("{:?}", f),
-            VarType::Vector(v) => format!("[{}]", join(v.iter().map(VarType::render_as_string), ","))
+            VarType::Vector(v) => {
+                format!("[{}]", join(v.iter().map(VarType::render_as_string), ","))
+            }
         }
     }
 }
@@ -101,12 +98,10 @@ pub enum Operation<I: Clone + Copy + Debug> {
     External,
     Const(VarType),
     Vector(Vec<I>),
-    Sum(I, I),
-    Concat(I, I),
+    BinaryOp(I, I, BinaryOp),
     ToString(I),
     IfElse(I, I, I),
     ApplyFragment(I, Vec<I>),
-    Index(I, I)
 }
 
 impl<I: Copy + Debug> Operation<I> {
@@ -116,12 +111,10 @@ impl<I: Copy + Debug> Operation<I> {
             External => vec![],
             Const(_) => Vec::new(),
             Vector(v) => v.clone(),
-            Sum(a, b) => vec![*a, *b],
-            Concat(a, b) => vec![*a, *b],
+            BinaryOp(a,b,_) => vec![*a, *b],
             ToString(a) => vec![*a],
             IfElse(a, b, c) => vec![*a, *b, *c],
             ApplyFragment(f, args) => iter::once(*f).chain(args.iter().cloned()).collect(),
-            Index(v, a) => vec![*v, *a]
         }
     }
 }
@@ -129,17 +122,17 @@ impl<I: Copy + Debug> Operation<I> {
 // pub struct RuntimeModule(pub Box<dyn Fn(Vec<NodeIndex>, &mut RuntimeEnv) -> NodeIndex>);
 
 #[derive(Eq, PartialEq, Hash, Copy, Clone, Debug)]
-pub enum ValueRef {
+pub enum LacunaryRef {
     InputRef { up: usize, index: usize },
     ContextRef { up: usize, index: usize },
     InstanciatedRef(NodeIndex),
 }
 
-impl ValueRef {
+impl LacunaryRef {
     /// How many parent contexts up in which to look for the value being referenced to.
     /// Returns None if the reference has already been fulfilled.
     pub fn up(&self) -> Option<usize> {
-        use ValueRef::*;
+        use LacunaryRef::*;
         match self {
             InputRef { up, index: _ } => Some(*up),
             ContextRef { up, index: _ } => Some(*up),
@@ -163,13 +156,13 @@ pub struct Fragment<I: Copy + Debug> {
     pub output: I,
 }
 
-impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
+impl Lacunary<Fragment<NodeIndex>> for Fragment<LacunaryRef> {
     fn fill_in(
         &self,
         nodes: &[NodeIndex],
         inputs: &[NodeIndex],
         depth: usize,
-    ) -> Fragment<ValueRef> {
+    ) -> Fragment<LacunaryRef> {
         Fragment {
             name: self.name.clone(),
             nodes: self
@@ -186,7 +179,7 @@ impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
             name: self.name,
             nodes: self.nodes.into_iter().map(|n| n.finalize()).collect(),
             // nodes: self.nodes.iter().map(|n| match n {
-            //     ValueRef::InstanciatedRef(n) => n,
+            //     LacunaryRef::InstanciatedRef(n) => n,
             //     _ => panic!("cannot finalize with remaining hole")
             // }).collect(),
             output: self.output.finalize(),
@@ -194,13 +187,13 @@ impl Lacunary<Fragment<NodeIndex>> for Fragment<ValueRef> {
     }
 }
 
-impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
+impl Lacunary<Operation<NodeIndex>> for Operation<LacunaryRef> {
     fn fill_in(
         &self,
         indices: &[NodeIndex],
         inputs: &[NodeIndex],
         depth: usize,
-    ) -> Operation<ValueRef> {
+    ) -> Operation<LacunaryRef> {
         use Operation::*;
 
         match self {
@@ -211,13 +204,10 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
                     .map(|n| n.fill_in(indices, inputs, depth))
                     .collect(),
             ),
-            Sum(a, b) => Sum(
+            BinaryOp(a, b, op) => BinaryOp(
                 a.fill_in(indices, inputs, depth),
                 b.fill_in(indices, inputs, depth),
-            ),
-            Concat(a, b) => Concat(
-                a.fill_in(indices, inputs, depth),
-                b.fill_in(indices, inputs, depth),
+                *op
             ),
             ToString(a) => ToString(a.fill_in(indices, inputs, depth)),
             IfElse(a, b, c) => IfElse(
@@ -230,8 +220,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
                 args.iter()
                     .map(|n| n.fill_in(indices, inputs, depth))
                     .collect(),
-            ),
-            Index(v, i) => Index(v.fill_in(indices, inputs, depth), i.fill_in(indices, inputs, depth))
+            )
         }
     }
 
@@ -242,14 +231,12 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
             External => External,
             Const(c) => Const(c.finalize()),
             Vector(v) => Vector(v.iter().map(|n| n.finalize()).collect()),
-            Sum(a, b) => Sum(a.finalize(), b.finalize()),
-            Concat(a, b) => Concat(a.finalize(), b.finalize()),
+            BinaryOp(a, b, op) => BinaryOp(a.finalize(), b.finalize(), op),
             ToString(a) => ToString(a.finalize()),
             IfElse(a, b, c) => IfElse(a.finalize(), b.finalize(), c.finalize()),
             ApplyFragment(f, args) => {
                 ApplyFragment(f.finalize(), args.iter().map(|n| n.finalize()).collect())
-            },
-            Index(v, i) => Index(v.finalize(), i.finalize())
+            }
         }
     }
 }
@@ -265,7 +252,9 @@ impl Lacunary<VarType> for VarType {
             VarType::Int(i) => VarType::Int(*i),
             VarType::Char(c) => VarType::Char(*c),
             VarType::Vector(v) => VarType::Vector(Rc::new(
-                v.iter().map(|n| n.fill_in(indices, inputs, depth)).collect(),
+                v.iter()
+                    .map(|n| n.fill_in(indices, inputs, depth))
+                    .collect(),
             )),
         }
     }
@@ -284,13 +273,13 @@ impl Lacunary<VarType> for VarType {
     }
 }
 
-impl Lacunary<NodeIndex> for ValueRef {
-    fn fill_in(&self, nodes: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> ValueRef {
+impl Lacunary<NodeIndex> for LacunaryRef {
+    fn fill_in(&self, nodes: &[NodeIndex], inputs: &[NodeIndex], depth: usize) -> LacunaryRef {
         if self.up() == Some(depth) {
-            ValueRef::InstanciatedRef(match self {
-                ValueRef::ContextRef { up: _, index } => nodes[*index],
-                ValueRef::InputRef { up: _, index } => inputs[*index],
-                ValueRef::InstanciatedRef(ni) => *ni,
+            LacunaryRef::InstanciatedRef(match self {
+                LacunaryRef::ContextRef { up: _, index } => nodes[*index],
+                LacunaryRef::InputRef { up: _, index } => inputs[*index],
+                LacunaryRef::InstanciatedRef(ni) => *ni,
             })
         } else {
             *self
@@ -299,8 +288,8 @@ impl Lacunary<NodeIndex> for ValueRef {
 
     fn finalize(self) -> NodeIndex {
         match self {
-            ValueRef::InstanciatedRef(ni) => ni,
-            _ => panic!("trying to finalize an incomplete ValueRef: {:?}", self),
+            LacunaryRef::InstanciatedRef(ni) => ni,
+            _ => panic!("trying to finalize an incomplete LacunaryRef: {:?}", self),
         }
     }
 }

@@ -1,6 +1,7 @@
-use crate::program::{Fragment, Operation, ValueRef, VarType};
+use crate::program::{Fragment, Operation, LacunaryRef, VarType};
 use std::collections::HashMap;
 use std::rc::Rc;
+// use crate::ast::Type;
 
 // #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 // pub struct FragmentRef {
@@ -8,10 +9,17 @@ use std::rc::Rc;
 //     pub index: usize,
 // }
 
+type Type = ();
+
+struct NodeScaffold {
+    operation: Operation<LacunaryRef>,
+    node_type: Type
+}
+
 pub struct FragmentBuilder<'a> {
     name: String,
-    pub values_by_name: HashMap<String, ValueRef>,
-    values: Vec<Operation<ValueRef>>,
+    pub values_by_name: HashMap<String, LacunaryRef>,
+    values: Vec<NodeScaffold>,
     parent: Option<&'a FragmentBuilder<'a>>,
 }
 
@@ -25,29 +33,33 @@ impl<'a> FragmentBuilder<'a> {
         }
     }
 
-    pub fn lookup_value(&self, name: &str) -> Option<ValueRef> {
+    pub fn lookup_value(&self, name: &str) -> Option<LacunaryRef> {
         match self.values_by_name.get(name) {
             Some(idx) => Some(*idx),
             None => match self.parent {
                 Some(par) => par.lookup_value(name).map(|vr| match vr {
-                    ValueRef::ContextRef { up, index } => ValueRef::ContextRef { up:up+1, index },
-                    ValueRef::InputRef { up, index } => ValueRef::ContextRef { up:up+1, index },
-                    ValueRef::InstanciatedRef(ni) => ValueRef::InstanciatedRef(ni)
+                    LacunaryRef::ContextRef { up, index } => {
+                        LacunaryRef::ContextRef { up: up + 1, index }
+                    }
+                    LacunaryRef::InputRef { up, index } => LacunaryRef::ContextRef { up: up + 1, index },
+                    LacunaryRef::InstanciatedRef(ni) => LacunaryRef::InstanciatedRef(ni),
                 }),
                 None => None,
             },
         }
     }
 
-    pub fn alloc_value(&mut self, value: Operation<ValueRef>) -> ValueRef {
-        self.values.push(value);
-        ValueRef::ContextRef {
+    pub fn alloc_value(&mut self, operation: Operation<LacunaryRef>) -> LacunaryRef {
+
+        self.values.push(NodeScaffold{ operation, node_type: ()});
+
+        LacunaryRef::ContextRef {
             up: 0,
             index: self.values.len() - 1,
         }
     }
 
-    pub fn alloc_fragment(&mut self, frag: Fragment<ValueRef>) -> ValueRef {
+    pub fn alloc_fragment(&mut self, frag: Fragment<LacunaryRef>) -> LacunaryRef {
         self.alloc_value(Operation::Const(VarType::Fragment(Rc::new(frag))))
     }
 
@@ -60,10 +72,10 @@ impl<'a> FragmentBuilder<'a> {
         }
     }
 
-    pub fn build(self, output: ValueRef) -> Fragment<ValueRef> {
+    pub fn build(self, output: LacunaryRef) -> Fragment<LacunaryRef> {
         Fragment {
             name: self.name,
-            nodes: self.values,
+            nodes: self.values.into_iter().map(|v| v.operation).collect(),
             output,
         }
     }

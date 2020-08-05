@@ -1,18 +1,19 @@
 extern crate nom;
 
-#[cfg(test)]
-extern crate quickcheck;
-#[cfg(test)]
-#[macro_use(quickcheck)]
-extern crate quickcheck_macros;
+// #[cfg(test)]
+// extern crate quickcheck;
+// #[cfg(test)]
+// #[macro_use(quickcheck)]
+// extern crate quickcheck_macros;
 
 mod ast;
 mod build;
-mod gen_ast;
+// mod gen_ast;
 mod nom_parse;
 mod program;
 mod quoted_string;
 mod run;
+mod verifier;
 
 extern crate term_size;
 // extern crate pest;
@@ -20,15 +21,15 @@ extern crate term_size;
 // extern crate pest_derive;
 
 use nom::error::VerboseError;
-use run::*;
-use std::process::exit;
-use std::{env, fs};
-use std::io::{self, Write};
-use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
-use std::thread;
 use program::VarType;
+use std::io::{self, Write};
+use std::process::exit;
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
 use std::time::Duration;
+use std::{env, fs};
+
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -38,9 +39,7 @@ fn main() {
     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
 
     let result = match nom_parse::parse_tempura::<VerboseError<&str>>(&contents) {
-        Ok((_, result)) => {
-            result
-        }
+        Ok((_, result)) => result,
         Err(e) => {
             println!("{}", e);
             exit(1);
@@ -55,20 +54,22 @@ fn main() {
 
     println!("\u{001B}[32mBuild successful...");
 
-    rte.listen(rte.stdout.unwrap(), false, Box::new(|_t,c| {
-        match c {
+    rte.listen(
+        rte.stdout.unwrap(),
+        false,
+        Box::new(|_t, c| match c {
             VarType::Char(c) => {
-                print!("{}",c);
+                print!("{}", c);
                 io::stdout().flush().unwrap();
-            },
+            }
             VarType::Null => (),
-            _ => panic!("stdout should be char stream")
-        }
-    }));
+            _ => panic!("stdout should be char stream"),
+        }),
+    );
 
     enum Event {
         Stdin(char),
-        ClockTick(u64)
+        ClockTick(u64),
     }
 
     let (tx, rx): (Sender<Event>, Receiver<Event>) = mpsc::channel();
@@ -85,24 +86,26 @@ fn main() {
     });
 
     // Spawn one second timer
-    thread::spawn(move || {
-        loop {
-            let mut input = String::new();
-            match io::stdin().read_line(&mut input) {
-                Ok(n) => {
-                    for c in input.chars() {
-                        tx2.send(Event::Stdin(c)).unwrap()
-                    }
+    thread::spawn(move || loop {
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_n) => {
+                for c in input.chars() {
+                    tx2.send(Event::Stdin(c)).unwrap()
                 }
-                Err(error) => println!("error: {}", error),
             }
+            Err(error) => println!("error: {}", error),
         }
     });
-    
-    loop{
+
+    loop {
         match rx.recv().unwrap() {
-            Event::Stdin(c) => {rte.put_current(rte.stdin.unwrap(), VarType::Char(c));},
-            Event::ClockTick(t) => {rte.put_current(rte.clock.unwrap(), VarType::Int(t as i64));}
-        }   
+            Event::Stdin(c) => {
+                rte.put_current(rte.stdin.unwrap(), VarType::Char(c));
+            }
+            Event::ClockTick(t) => {
+                rte.put_current(rte.clock.unwrap(), VarType::Int(t as i64));
+            }
+        }
     }
 }
