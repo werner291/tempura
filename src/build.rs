@@ -89,6 +89,12 @@ fn build_value(expr: Expression, env: &mut FragmentBuilder) -> ValueRef {
             let b_idx = build_value(*b, env);
 
             env.alloc_value(Sum(a_idx, b_idx))
+        },
+        Expression::ContainerIndexing(c,i) => {
+            let c_idx = build_value(*c, env);
+            let i_idx = build_value(*i, env);
+
+            env.alloc_value(Index(c_idx, i_idx))
         }
         Expression::Range { from: _, to: _ } => panic!("Not yet implemented!"),
     }
@@ -177,12 +183,17 @@ pub fn build_runtime(main_module: Module) -> Result<RuntimeEnv, &'static str> {
     let stdin = re.node_from_operation(Operation::External);
     fb.values_by_name.insert("stdin".to_string(), ValueRef::InstanciatedRef(stdin));
 
+    let clock = re.node_from_operation(Operation::External);
+    re.put_current(clock, VarType::Int(0));
+    fb.values_by_name.insert("clock".to_string(), ValueRef::InstanciatedRef(clock));
+
     let mainmod = build_module(main_module, &fb).unwrap();
 
     let stdout = re.instantiate_fragment(&mainmod, vec![]);
 
     re.stdout = Some(stdout);
     re.stdin = Some(stdin);
+    re.clock = Some(clock);
 
     Ok(re)
 }

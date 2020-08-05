@@ -23,8 +23,12 @@ use nom::error::VerboseError;
 use run::*;
 use std::process::exit;
 use std::{env, fs};
-use std::io;
+use std::io::{self, Write};
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+use std::thread;
 use program::VarType;
+use std::time::Duration;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -53,23 +57,52 @@ fn main() {
 
     rte.listen(rte.stdout.unwrap(), false, Box::new(|_t,c| {
         match c {
-            VarType::Char(c) => print!("{}",c),
+            VarType::Char(c) => {
+                print!("{}",c);
+                io::stdout().flush().unwrap();
+            },
             VarType::Null => (),
             _ => panic!("stdout should be char stream")
         }
     }));
 
+    enum Event {
+        Stdin(char),
+        ClockTick(u64)
+    }
+
+    let (tx, rx): (Sender<Event>, Receiver<Event>) = mpsc::channel();
+    let tx2 = tx.clone();
+
+    // Spawn one second timer
+    thread::spawn(move || {
+        let mut t = 0;
+        loop {
+            thread::sleep(Duration::from_millis(100));
+            tx.send(Event::ClockTick(t)).unwrap();
+            t += 1;
+        }
+    });
+
+    // Spawn one second timer
+    thread::spawn(move || {
+        loop {
+            let mut input = String::new();
+            match io::stdin().read_line(&mut input) {
+                Ok(n) => {
+                    for c in input.chars() {
+                        tx2.send(Event::Stdin(c)).unwrap()
+                    }
+                }
+                Err(error) => println!("error: {}", error),
+            }
+        }
+    });
     
     loop{
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(n) => {
-                for c in input.chars() {
-                    rte.put_current(rte.stdin.unwrap(), VarType::Char(c));
-                }
-            }
-            Err(error) => println!("error: {}", error),
-        }
+        match rx.recv().unwrap() {
+            Event::Stdin(c) => {rte.put_current(rte.stdin.unwrap(), VarType::Char(c));},
+            Event::ClockTick(t) => {rte.put_current(rte.clock.unwrap(), VarType::Int(t as i64));}
+        }   
     }
-    // println!("{}", .stringify().unwrap());
 }

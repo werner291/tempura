@@ -16,7 +16,9 @@ pub struct RuntimeEnv {
     current_time: Time,
     nodes: Arena<Node>,
     pub stdout: Option<NodeIndex>,
-    pub stdin: Option<NodeIndex>
+    pub stdin: Option<NodeIndex>,
+    pub clock: Option<NodeIndex>
+
 }
 
 type Time = u64;
@@ -27,6 +29,7 @@ impl RuntimeEnv {
             nodes: Arena::new(),
             stdout: None,
             stdin: None,
+            clock: None,
             current_time: 0
         }
     }
@@ -62,7 +65,7 @@ impl RuntimeEnv {
         node.being_computed = true;
 
         let new_val = match node.operation.clone() {
-            External => VarType::Null,
+            External => node.value_cache.clone().unwrap_or(VarType::Null),
             Const(v) => v,
             Vector(v) => {
                 VarType::Vector(Rc::new(v.iter().map(|idx_1| self.pull_once(*idx_1)).collect()))
@@ -92,11 +95,16 @@ impl RuntimeEnv {
                 } else {
                     self.pull_once(eb)
                 }
-            }
+            },
             ApplyFragment(fref, args) => {
                 let fragref = self.pull_once(fref).unpack_fragment().unwrap().clone();
                 let outref = self.instantiate_fragment(fragref.as_ref(), args);
                 self.pull_once(outref)
+            },
+            Index(v,i) => {
+                let ve = self.pull_once(v).unpack_vector().expect("can only index into a vector");
+                let id = self.pull_once(i).unpack_int().expect("can only index with an int index");
+                ve[id as usize].clone()
             }
         };
         self.nodes[idx.0].value_cache = Some(new_val.clone());

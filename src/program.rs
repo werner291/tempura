@@ -106,6 +106,7 @@ pub enum Operation<I: Clone + Copy + Debug> {
     ToString(I),
     IfElse(I, I, I),
     ApplyFragment(I, Vec<I>),
+    Index(I, I)
 }
 
 impl<I: Copy + Debug> Operation<I> {
@@ -120,6 +121,7 @@ impl<I: Copy + Debug> Operation<I> {
             ToString(a) => vec![*a],
             IfElse(a, b, c) => vec![*a, *b, *c],
             ApplyFragment(f, args) => iter::once(*f).chain(args.iter().cloned()).collect(),
+            Index(v, a) => vec![*v, *a]
         }
     }
 }
@@ -229,6 +231,7 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
                     .map(|n| n.fill_in(indices, inputs, depth))
                     .collect(),
             ),
+            Index(v, i) => Index(v.fill_in(indices, inputs, depth), i.fill_in(indices, inputs, depth))
         }
     }
 
@@ -245,7 +248,8 @@ impl Lacunary<Operation<NodeIndex>> for Operation<ValueRef> {
             IfElse(a, b, c) => IfElse(a.finalize(), b.finalize(), c.finalize()),
             ApplyFragment(f, args) => {
                 ApplyFragment(f.finalize(), args.iter().map(|n| n.finalize()).collect())
-            }
+            },
+            Index(v, i) => Index(v.finalize(), i.finalize())
         }
     }
 }

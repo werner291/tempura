@@ -93,6 +93,7 @@ pub enum Expression {
     ConstString(String),
     ConstInteger(i64),
     ConstBoolean(bool),
+    ContainerIndexing(Box<Expression>,Box<Expression>),
     ModuleApplication {
         mod_name: Name,
         arguments: Vec<Expression>,
@@ -134,6 +135,11 @@ impl Expression {
             Expression::ConstString(_) => vec![],
             Expression::ConstInteger(_) => vec![],
             Expression::ConstBoolean(_) => vec![],
+            Expression::ContainerIndexing(a,b) => a
+                .collect_dependencies()
+                .into_iter()
+                .chain(b.collect_dependencies().into_iter())
+                .collect(),
             Expression::ValueRef(n) => vec![Dependency::Value(n.0.clone())],
             Expression::Range { from, to } => from
                 .collect_dependencies()
@@ -176,6 +182,7 @@ impl TempuraAST for Expression {
             Expression::ConstInteger(i) => i.to_string(),
             Expression::ConstBoolean(b) => (if *b { "true" } else { "false" }).to_string(),
             Expression::ValueRef(n) => n.gen_code(),
+            Expression::ContainerIndexing(c,i) => format!("\"{}\"[{}]", c.gen_code(), i.gen_code()),
             Expression::Range { from, to } => format!("{}..{}", from.gen_code(), to.gen_code()),
             Expression::Sum { a, b } => format!("{}..{}", a.gen_code(), b.gen_code()),
             Expression::ModuleApplication {

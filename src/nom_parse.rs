@@ -171,8 +171,19 @@ fn function_application<'a, E: ParseError<&'a str>>(
     )(src)
 }
 
+fn container_index<'a, E: ParseError<&'a str>>(
+    src: &'a str,
+) -> nom::IResult<&str, Expression, E> {
+    context(
+        "container index",
+        map(pair(single_expression, delimited(char('['), expression, preceded(whitespace,char(']')))), |(cont, idx)| {
+            Expression::ContainerIndexing(Box::new(cont), Box::new(idx))
+        }),
+    )(src)
+}
+
 fn expression<'a, E: ParseError<&'a str>>(src: &'a str) -> nom::IResult<&str, Expression, E> {
-    alt((function_application, range, sum, ifelse, single_expression))(src)
+    alt((function_application, container_index, range, sum, ifelse, single_expression))(src)
 }
 
 fn single_expression<'a, E: ParseError<&'a str>>(
